@@ -1,7 +1,7 @@
 name: demo
 on:
   push:
-    branches: [main, feature/first-playable, feature/reference-pipeline-docker, feature/ww2-aircraft-blender, feature/ign-address-flight, feature/integration-ign-ww2]
+    branches: [main, feature/first-playable, feature/reference-pipeline-docker, feature/ww2-aircraft-blender, feature/ign-address-flight, feature/integration-ign-ww2, feature/address-based-missions]
   workflow_dispatch:
 jobs:
   jumphp:
@@ -42,6 +42,11 @@ jobs:
         env:
           JUMPHP_SCENE: 'App\Scene\AddressEntryScene'
         run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/address-entry.png
+      - name: Address-based combat mission screenshot
+        env:
+          JUMPHP_SCENE: 'App\Scene\PlayScene'
+          JUMPHP_SCENE_PARAMS: '{"address":"Beauce demo","latitude":48.17,"longitude":1.54,"label":"Beauce"}'
+        run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/address-mission.png
       - name: Browser engine
         run: bin/jumphp engine:download
       - name: Browser build
