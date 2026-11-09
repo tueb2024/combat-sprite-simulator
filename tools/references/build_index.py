@@ -55,7 +55,7 @@ def main() -> int:
         output = INDEX / f"{pdf.stem}.txt"
         try:
             proc = subprocess.run(
-                ["pdftotext", "-layout", "-nopgbrk", str(pdf), str(output)],
+                ["pdftotext", "-layout", str(pdf), str(output)],
                 capture_output=True,
                 text=True,
                 check=False,
