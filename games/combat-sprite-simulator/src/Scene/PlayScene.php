@@ -20,6 +20,10 @@ final class PlayScene extends AbstractScene
     private float $fireDelay = 0;
     private float $spawnDelay = 0;
     private float $bossDelay = 0;
+    private float $bonusDelay = 9;
+    private float $speedBoost = 0;
+    private float $rapidBoost = 0;
+    private float $muzzleFlash = 0;
     private float $invulnerable = 0;
     private float $bossX = 160;
     private float $bossY = -90;
@@ -32,12 +36,15 @@ final class PlayScene extends AbstractScene
     private array $enemies = [];
     private array $shots = [];
     private array $sparks = [];
+    private array $bonuses = [];
+    private int $bonusCount = 0;
     private int $spawnCount = 0;
     private $hurricaneTex = null;
     private $junkersTex = null;
     private $bf109Tex = null;
     private $ju87Tex = null;
     private $groundTex = null;
+    private $effectsTex = null;
 
     private ?MissionTerrain $missionTerrain = null;
     private ?OrthoTileManager $missionTiles = null;
@@ -70,6 +77,10 @@ final class PlayScene extends AbstractScene
         $this->geoMessage = '';
         $this->releaseShadows();
         $this->time = $this->scroll = $this->fireDelay = $this->spawnDelay = $this->bossDelay = 0;
+        $this->bonusDelay = 9;
+        $this->speedBoost = $this->rapidBoost = $this->muzzleFlash = 0;
+        $this->bonuses = [];
+        $this->bonusCount = 0;
         $this->x = 160;
         $this->y = 405;
         $this->bossX = 160;
@@ -82,6 +93,9 @@ final class PlayScene extends AbstractScene
         $this->paused = false;
         $this->demo = !empty($params['demo']);
         $this->enemies = $this->shots = $this->sparks = [];
+        if (isset($params['testBonus']) && in_array($params['testBonus'], ['speed', 'rapid'], true)) {
+            $this->bonuses[] = ['x' => $this->x, 'y' => $this->y, 'type' => $params['testBonus']];
+        }
         $this->spawnCount = 0;
         if (!empty($params['boss'])) {
             $this->phase = 'boss';
@@ -96,6 +110,7 @@ final class PlayScene extends AbstractScene
             'combat-ground' => 'assets/tiles/ign-beauce-2023.png',
             'combat-bf109' => 'assets/sprites/bf109-e4-atlas.png',
             'combat-ju87' => 'assets/sprites/ju87-b2-atlas.png',
+            'combat-effects' => 'assets/sprites/effects-atlas.png',
         ] as $name => $path) {
             if (!$this->sdl()->hasTexture($name)) {
                 $this->sdl()->loadTexture($name, $path);
@@ -106,6 +121,7 @@ final class PlayScene extends AbstractScene
         $this->bf109Tex = $this->sdl()->getTexture('combat-bf109')['texture'];
         $this->ju87Tex = $this->sdl()->getTexture('combat-ju87')['texture'];
         $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
+        $this->effectsTex = $this->sdl()->getTexture('combat-effects')['texture'];
 
         $this->siteMissionListener = function (array $event): void {
             if ($this->scenes()->current() !== $this) {
@@ -270,15 +286,44 @@ final class PlayScene extends AbstractScene
             $this->geoMessage = '';
         }
         $this->invulnerable = max(0, $this->invulnerable - $dt);
+        $this->speedBoost = max(0, $this->speedBoost - $dt);
+        $this->rapidBoost = max(0, $this->rapidBoost - $dt);
+        $this->muzzleFlash = max(0, $this->muzzleFlash - $dt);
         $dx = $this->demo ? sin($this->time * 1.4) * 0.6 : $this->actions()->axis('left', 'right');
         $dy = $this->demo ? 0 : $this->actions()->axis('up', 'down');
-        $this->x = max(28, min(292, $this->x + $dx * 175 * $dt));
-        $this->y = max(100, min(440, $this->y + $dy * 175 * $dt));
+        $speed = $this->speedBoost > 0 ? 255 : 175;
+        $this->x = max(28, min(292, $this->x + $dx * $speed * $dt));
+        $this->y = max(100, min(440, $this->y + $dy * $speed * $dt));
         $this->fireDelay -= $dt;
         if (($this->demo || $this->actions()->isHeld('fire')) && $this->fireDelay <= 0) {
-            foreach ([-10, 10] as $offset) $this->shots[] = ['x' => $this->x + $offset, 'y' => $this->y - 22, 'vy' => -370, 'friendly' => true];
-            $this->fireDelay = 0.14;
+            // Four visible muzzle positions stand for the Hurricane's wing gun groups.
+            foreach ([-22, -13, 13, 22] as $offset) {
+                $this->shots[] = ['x' => $this->x + $offset, 'y' => $this->y - 17,
+                    'vy' => -400, 'friendly' => true];
+            }
+            $this->muzzleFlash = 0.07;
+            $this->fireDelay = $this->rapidBoost > 0 ? 0.09 : 0.19;
         }
+        $this->bonusDelay -= $dt;
+        if ($this->bonusDelay <= 0 && $this->phase === 'wave') {
+            $this->bonuses[] = ['x' => 55 + ($this->bonusCount * 97) % 210,
+                'y' => -18, 'type' => $this->bonusCount % 2 === 0 ? 'speed' : 'rapid'];
+            $this->bonusCount++;
+            $this->bonusDelay = 11;
+        }
+        foreach ($this->bonuses as $i => &$bonus) {
+            $bonus['y'] += 88 * $dt;
+            if ($bonus['y'] > 500) { unset($this->bonuses[$i]); continue; }
+            if (Hitbox::overlap($bonus['x'] - 12, $bonus['y'] - 12, 24, 24,
+                $this->x - 15, $this->y - 15, 30, 30)) {
+                if ($bonus['type'] === 'speed') $this->speedBoost = 8;
+                else $this->rapidBoost = 8;
+                $this->score += 25;
+                $this->burst($bonus['x'], $bonus['y']);
+                unset($this->bonuses[$i]);
+            }
+        }
+        unset($bonus);
         if ($this->phase === 'wave') {
             $this->spawnDelay -= $dt;
             if ($this->spawnDelay <= 0) {
@@ -434,15 +479,34 @@ final class PlayScene extends AbstractScene
             $damageFrame = $this->bossHp < 50 ? 1 : 0;
             $r->copy($this->junkersTex, [$damageFrame * 512, 0, 512, 256], $this->bossX - 80, $this->bossY - 40, 160, 80);
         }
-        foreach ($this->shots as $s) $r->fillRect($s['x'] - 2, $s['y'] - 6, 4, 12, $s['friendly'] ? [255, 219, 91] : [247, 105, 64]);
+        foreach ($this->bonuses as $bonus) {
+            $tile = $bonus['type'] === 'speed' ? 128 : 192;
+            $r->copy($this->effectsTex, [$tile, 0, 64, 64],
+                $bonus['x'] - 13, $bonus['y'] - 13, 26, 26);
+        }
+        foreach ($this->shots as $s) {
+            $r->copy($this->effectsTex, [$s['friendly'] ? 0 : 64, 0, 64, 64],
+                $s['x'] - 5, $s['y'] - 10, 10, 20);
+        }
         if ($this->invulnerable <= 0 || (int)($this->time * 10) % 2 === 0) {
             $bankFrame = $this->demo ? 1 : ($this->actions()->isHeld('left') ? 0 : ($this->actions()->isHeld('right') ? 2 : 1));
             $propFrame = ((int)($this->time * 18)) % 3;
             $r->copy($this->hurricaneTex, [$propFrame * 512, $bankFrame * 512, 512, 512], $this->x - 30, $this->y - 30, 60, 60);
+            if ($this->muzzleFlash > 0) {
+                foreach ([-22, -13, 13, 22] as $offset) {
+                    $r->copy($this->effectsTex, [256, 0, 64, 64],
+                        $this->x + $offset - 6, $this->y - 26, 12, 12);
+                }
+            }
         }
         foreach ($this->sparks as $s) $r->fillRect($s['x'], $s['y'], 4, 4, [255, 177, 63]);
         $r->fillRect(0, 0, 320, 31, [20, 30, 34, 225]);
         $this->font()->draw($r, 'LIVES ' . $this->lives . '   SCORE ' . $this->score, 7, 8, 1, [255, 248, 215]);
+        if ($this->speedBoost > 0 || $this->rapidBoost > 0) {
+            $boost = $this->speedBoost > 0 ? 'SPEED ' . (int) ceil($this->speedBoost) : '';
+            if ($this->rapidBoost > 0) $boost .= ($boost === '' ? '' : '  ') . 'RAPID ' . (int) ceil($this->rapidBoost);
+            $this->font()->draw($r, $boost, 314, 8, 1, [144, 241, 208], 'right');
+        }
         $this->font()->draw($r, '(C) IGN - BD ORTHO', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
         if ($this->missionTerrain !== null) {
             $r->fillRect(0, 31, 320, 18, [17, 28, 32, 217]);

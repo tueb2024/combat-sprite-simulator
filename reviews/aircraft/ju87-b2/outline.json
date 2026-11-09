@@ -1,0 +1,13 @@
+{
+  "id": "ju87-b2", "designation": "Junkers Ju 87 B-2 Stuka", "role": "enemy",
+  "source_file": "source-plan.svg", "source_working_size": [1295, 1521],
+  "source_orientation": "nose_left", "centerline_px": 947, "nose_px": 48, "tail_px": 934,
+  "span_bounds_px": [378, 1516], "dimensions_m": {"span": 13.8, "length": 11.1},
+  "gameplay_size": [72, 68],
+  "right_wing_px": [[224, 907], [228, 800], [237, 420], [250, 389], [275, 379], [345, 378], [363, 391], [450, 633], [522, 898], [539, 916]],
+  "right_tail_px": [[790, 922], [792, 773], [806, 746], [828, 741], [872, 743], [879, 759], [880, 919]],
+  "body_sections_px": [[48, 3], [70, 26], [160, 41], [250, 48], [390, 53], [520, 50], [690, 35], [830, 23], [910, 12], [934, 2]],
+  "canopy_px": [282, 505], "roundel_px": [355, 625], "palette": "luftwaffe_1940",
+  "fixed_gear_px": [[253, 840], [253, 1054]],
+  "source_confidence": "B-2 three-view plan; inverted gull and gear fairings modeled"
+}

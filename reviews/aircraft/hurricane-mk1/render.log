@@ -1,0 +1,20 @@
+00:00.797  cycles           | WARNING HIPEW initialization failed: Error opening HIP dynamic library
+C:\Users\tchou\combat-sprite-simulator-review\review_hurricane.py:249: DeprecationWarning: 'World.use_nodes' is expected to be removed in Blender 6.0
+  world.use_nodes = True
+C:\Users\tchou\combat-sprite-simulator-review\review_hurricane.py:29: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  mat.use_nodes = True
+00:08.282  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-prototype.png'
+00:10.344  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b0-p0.png'
+00:12.375  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b0-p1.png'
+00:14.391  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b0-p2.png'
+00:16.391  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b1-p0.png'
+00:18.422  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b1-p1.png'
+00:20.422  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b1-p2.png'
+00:22.454  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b2-p0.png'
+00:24.469  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b2-p1.png'
+00:26.516  render           | Saved: 'C:\Users\tchou\combat-sprite-simulator-review\output\hurricane-mk1-b2-p2.png'
+Info: Saved as "hurricane-prototype.blend"
+REVIEW HURRICANE COMPLETE CUDA NVIDIA GeForce GTX 1660 SUPER
+Blender 5.2.3 LTS (hash e13b728c6880 built 2026-10-22 01:37:16)
+
+Blender quit
