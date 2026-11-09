@@ -344,6 +344,51 @@ final class PlayScene extends AbstractScene
         }
     }
 
+    /** Cast the Blender alpha silhouettes onto the orthophoto, below the planes. */
+    private function drawMissionShadows(Renderer $r): void
+    {
+        if ($this->missionTerrain === null) {
+            return;
+        }
+        // A fixed NW sunlight direction and high sun (68 degrees).
+        $metersPerPixel = $this->missionTerrain->metersPerPixel();
+        $offsetScale = 1.0 / tan(deg2rad(68)) / $metersPerPixel;
+        $bearing = deg2rad(135); // Shadow SE, opposite the NW sunlight.
+        $offset = static fn (float $altitude): array => [
+            sin($bearing) * $altitude * $offsetScale,
+            -cos($bearing) * $altitude * $offsetScale,
+        ];
+
+        foreach ($this->enemies as $enemy) {
+            $texture = $enemy['type'] === 'bf109' ? $this->bf109ShadowTex : $this->ju87ShadowTex;
+            if ($texture === null) {
+                continue;
+            }
+            [$ox, $oy] = $offset($enemy['type'] === 'bf109' ? 24.0 : 20.0);
+            $r->copy($texture, null, $enemy['x'] - $enemy['width'] / 2 + $ox,
+                $enemy['y'] - $enemy['height'] / 2 + $oy, $enemy['width'], $enemy['height']);
+        }
+        if ($this->phase === 'boss' && $this->bossShadowTex !== null) {
+            [$ox, $oy] = $offset(35.0);
+            $r->copy($this->bossShadowTex, null,
+                $this->bossX - 80 + $ox, $this->bossY - 40 + $oy, 160, 80);
+        }
+        if ($this->playerShadowTex !== null) {
+            [$ox, $oy] = $offset(15.0);
+            $r->copy($this->playerShadowTex, null, $this->x - 30 + $ox,
+                $this->y - 30 + $oy, 60, 60);
+        }
+    }
+
+    private function asciiLabel(string $text): string
+    {
+        $text = strtr($text, [
+            'é'=>'e', 'è'=>'e', 'ê'=>'e', 'É'=>'E', 'à'=>'a', 'À'=>'A',
+            'ç'=>'c', 'Ç'=>'C', 'î'=>'i', 'ô'=>'o', 'ù'=>'u', 'û'=>'u',
+        ]);
+        return strtoupper(substr(preg_replace('/[^\x20-\x7E]/', ' ', $text) ?? '', 0, 42));
+    }
+
     public function render(Renderer $r): void
     {
         $r->clear([38, 63, 53]);
@@ -353,7 +398,12 @@ final class PlayScene extends AbstractScene
             $r->copy($this->groundTex, null, 0, $y, 320, 480);
             $r->copy($this->groundTex, null, 0, $y + 480, 320, 480, false, true);
         }
+        if ($this->missionTerrain !== null && $this->missionTiles !== null) {
+            [$cameraX, $cameraY] = $this->missionTerrain->camera($this->scroll);
+            $this->missionTiles->draw($r, $cameraX, $cameraY, $this->width(), $this->height());
+        }
         $r->fillRect(0, 0, 320, 480, [10, 28, 23, 70]);
+        $this->drawMissionShadows($r);
         foreach ($this->enemies as $e) {
             $texture = $e['type'] === 'bf109' ? $this->bf109Tex : $this->ju87Tex;
             $r->copy($texture, EnemyProfile::frame($e), $e['x'] - $e['width'] / 2,
@@ -372,16 +422,41 @@ final class PlayScene extends AbstractScene
         foreach ($this->sparks as $s) $r->fillRect($s['x'], $s['y'], 4, 4, [255, 177, 63]);
         $r->fillRect(0, 0, 320, 31, [20, 30, 34, 225]);
         $this->font()->draw($r, 'LIVES ' . $this->lives . '   SCORE ' . $this->score, 7, 8, 1, [255, 248, 215]);
-        $this->font()->draw($r, '(C) IGN 2023', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
+        $this->font()->draw($r, '(C) IGN - BD ORTHO', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
+        if ($this->missionTerrain !== null) {
+            $r->fillRect(0, 31, 320, 18, [17, 28, 32, 217]);
+            $zone = $this->asciiLabel($this->missionTerrain->label);
+            $line = $this->geoState === 'fallback' ? 'IGN HS - F: ADRESSE'
+                : 'ZONE: ' . substr($zone, 0, 32);
+            $this->font()->draw($r, $line, 6, 36, 1, [250, 231, 185]);
+        }
         if ($this->phase === 'boss') {
-            $r->fillRect(55, 40, 210, 9, [27, 31, 31]);
-            $r->fillRect(57, 42, 206 * $this->bossHp / 100, 5, [217, 79, 58]);
-            $this->font()->draw($r, 'JUNKERS G 38', 160, 54, 1, [255, 248, 215], 'center');
+            $bossBarY = $this->missionTerrain !== null ? 57 : 40;
+            $r->fillRect(55, $bossBarY, 210, 9, [27, 31, 31]);
+            $r->fillRect(57, $bossBarY + 2, 206 * $this->bossHp / 100, 5, [217, 79, 58]);
+            $this->font()->draw($r, 'JUNKERS G 38', 160, $bossBarY + 14, 1, [255, 248, 215], 'center');
         }
         if ($this->phase === 'victory' || $this->phase === 'defeat') {
             $r->fillRect(20, 190, 280, 90, [18, 28, 32, 235]);
             $this->font()->draw($r, $this->phase === 'victory' ? 'VICTORY' : 'MISSION FAILED', 160, 212, 2, [255, 230, 180], 'center');
             $this->font()->draw($r, 'ENTER OR SPACE TO RESTART', 160, 253, 1, [220, 220, 210], 'center');
+        }
+        if ($this->geoState === 'search' || $this->geoState === 'loading'
+            || $this->geoState === 'error') {
+            $r->fillRect(16, 178, 288, 126, [11, 25, 32, 241]);
+            $r->drawRect(16, 178, 288, 126, [244, 210, 142]);
+            $title = match ($this->geoState) {
+                'search' => 'RECHERCHE DE L ADRESSE',
+                'loading' => 'CHARGEMENT PHOTOS IGN',
+                default => 'ADRESSE INTROUVABLE',
+            };
+            $this->font()->draw($r, $title, 160, 202, 1, [255, 234, 168], 'center');
+            $message = $this->asciiLabel($this->geoMessage);
+            $this->font()->draw($r, substr($message, 0, 36), 160, 232, 1, [230, 229, 208], 'center');
+            if ($this->geoState === 'error') {
+                $this->font()->draw($r, 'ENTREE OU F : AUTRE ADRESSE', 160, 270, 1,
+                    [255, 242, 201], 'center');
+            }
         }
         if ($this->paused) {
             $r->fillRect(30, 206, 260, 65, [18, 28, 32, 235]);
