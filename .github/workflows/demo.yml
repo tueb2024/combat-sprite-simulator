@@ -31,7 +31,7 @@ jobs:
       - name: Browser build
         run: bin/jumphp build combat-sprite-simulator
       - name: Browser screenshot
-        run: bin/jumphp webshot combat-sprite-simulator 8 '[[1,"Enter"]]'
+        run: bin/jumphp webshot combat-sprite-simulator 4 '[[1,"Enter"],[2,"ArrowLeft"],[2.4," "]]'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,3 +39,4 @@ jobs:
           path: |
             games/combat-sprite-simulator/var/screenshots/
             games/combat-sprite-simulator/dist/webshot.png
+            games/combat-sprite-simulator/dist/web/
