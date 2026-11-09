@@ -10,3 +10,4 @@ actions:
   left: [Left, A, Q, pad0:left]
   right: [Right, D, pad0:right]
   fire: [Space, pad0:a, touch:tap]
+  search_address: [F]
