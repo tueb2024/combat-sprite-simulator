@@ -1,0 +1,47 @@
+# What a project of yours does not keep of JumPHP's own development files (tools/project-clean.sh, `bin/jumphp tidy`).
+#   rm <path>       removed from a new project, and by `bin/jumphp tidy`
+#   example <path>  JumPHP's example projects: removed from a new project (all of games/ and apps/ are), and by `tidy --examples`
+# A project that makes its own extension keeps its extensions/<id>: only JumPHP's own are listed.
+
+# JumPHP's maintainers' notes
+rm TODO.md
+rm TODO-FIRST.md
+rm TODO-URGENT.md
+rm TODO-AFTER.md
+
+# JumPHP's own tooling for its development and its installers
+rm claude-mod
+rm .claude-plugin
+rm install.sh
+rm install.ps1
+
+# JumPHP's own extensions are on Packagist (jumphp/particles, jumphp/physics, jumphp/shorts): `bin/jumphp extension:add <game> <package>`
+rm extensions/collision
+rm extensions/dialogue
+rm extensions/tiles
+rm extensions/effects
+rm extensions/particles
+rm extensions/physics
+rm extensions/shorts
+rm extensions/runtime
+
+example games/breakout
+example games/collision-demo
+example games/dialogue-demo
+example games/tiles-demo
+example games/physics-demo
+example games/effects-demo
+example games/hello-cli
+example games/hello-desktop
+example games/hello-gui
+example games/hello-hybrid
+example games/hello-plugin
+example games/hello-threads
+example games/hello-webgl
+example games/hello-world
+example games/https-check
+example games/ide
+example games/jumpball
+example games/particles-demo
+example games/pong
+example games/shorts-demo

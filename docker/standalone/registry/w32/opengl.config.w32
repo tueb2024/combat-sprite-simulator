@@ -1,0 +1,8 @@
+ARG_WITH('opengl', 'OpenGL (JumPHP)', 'no');
+if (PHP_OPENGL != 'no') {
+    jumphp_libs('opengl', ['opengl32.lib', 'gdi32.lib']);
+    // OpenGL 1.2+ from SDL at run time: jumphp_glproc.h (registry/functions.php)
+    // WIN32_LEAN_AND_MEAN: its sources include windows.h before php.h (no old winsock.h against PHP's winsock2.h)
+    EXTENSION('opengl', 'php_convert.c php_opengl.c', PHP_OPENGL_SHARED, '/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1 /DWIN32_LEAN_AND_MEAN');
+    jumphp_includes('opengl');
+}

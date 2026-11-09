@@ -1,0 +1,8 @@
+# Actions of the game => keys / pad / touch. The engine already defines:
+#   up, down, left, right, confirm, back, pause (see JumPHP\Kernel\Engine::DEFAULT_ACTIONS)
+# Redefining one here replaces its bindings.
+# Key names: SDL names (Left, Right, Up, Down, Space, Return, Escape, Left Shift, A..Z, 0..9, F1..F12)
+# Other sources: pad0:a|b|x|y|lb|rb|lt|rt|select|start|ls|rs (gamepad, same names everywhere), pad0:left|right|up|down
+# (d-pad or left stick), pad0:button3 (raw), touch:left|right|up|down|tap, mouse:1
+actions:
+  jump: [Space, Up, W, Z, pad0:a, touch:tap]

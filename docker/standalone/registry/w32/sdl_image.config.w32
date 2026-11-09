@@ -1,0 +1,9 @@
+ARG_ENABLE('sdl_image', 'SDL2_image (JumPHP)', 'no');
+if (PHP_SDL_IMAGE != 'no') {
+    jumphp_libs('sdl_image', ['SDL2_image-static.lib;SDL2_image.lib']);
+    EXTENSION('sdl_image', 'php_sdl_image.c', PHP_SDL_IMAGE_SHARED, '/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1');
+    jumphp_includes('sdl_image');
+    ADD_EXTENSION_DEP('sdl_image', 'sdl');
+    AC_DEFINE('HAVE_SDL_IMAGE', 1);
+    AC_DEFINE('HAVE_SDL_IMAGE_FEATURE', 1);
+}

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JumPHP</title>
+<!--
+  A hybrid game embedded in its Tauri window (game.yaml ui: hybrid + app: {embed: true}; JumPHP\Tauri\EmbeddedGame):
+  the game's pictures come from the runtime (jumphpframe://), drawn sharp and letterboxed; the keyboard, the mouse
+  and the focus go back to PHP (jumphp.send('__input')). Served as /__jumphp/game.html.
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<script>
+(async () => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const info = await jumphp.invoke('__embed.info');
+  canvas.width = info.width;
+  canvas.height = info.height;
+  const bg = Array.isArray(info.background) ? info.background : [0, 0, 0];
+  document.body.style.background = `rgb(${bg[0] | 0}, ${bg[1] | 0}, ${bg[2] | 0})`;
+
+  // letterboxed, as big as the window allows (whole factors with integer_scale)
+  const fit = () => {
+    let s = Math.min(innerWidth / info.width, innerHeight / info.height);
+    if (info.integer_scale && s >= 1) s = Math.floor(s);
+    canvas.style.width = `${Math.round(info.width * s)}px`;
+    canvas.style.height = `${Math.round(info.height * s)}px`;
+  };
+  addEventListener('resize', fit);
+  fit();
+  canvas.focus();
+
+  // the pictures: the newest one, once per screen refresh (a 204 while there is none newer)
+  const base = navigator.userAgent.includes('Windows') ? 'http://jumphpframe.localhost/frame' : 'jumphpframe://localhost/frame';
+  let last = 0;
+  const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
+  for (;;) {
+    try {
+      const r = await fetch(`${base}?after=${last}`, {cache: 'no-store'});
+      if (r.status === 200) {
+        last = Number(r.headers.get('X-Frame')) || last + 1;
+        const picture = await createImageBitmap(await r.blob());
+        ctx.drawImage(picture, 0, 0);
+        picture.close();
+      }
+    } catch (e) {
+      // the runtime is closing, or a picture was cut: the next one
+    }
+    await nextPaint();
+  }
+})();
+
+// input -> PHP (EmbeddedGame::input)
+(() => {
+  const canvas = document.getElementById('game');
+  const send = (e) => jumphp.send('__input', e);
+  // keys the page would otherwise use itself (scrolling, focus moves, find...)
+  const keep = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab', 'Backspace', 'F1', 'F3', 'F5', 'F7', 'F11', 'Escape', 'Enter']);
+  addEventListener('keydown', (e) => {
+    if (keep.has(e.key) || e.key.length === 1) e.preventDefault();
+    if (!e.repeat) send({t: 'down', key: e.key, code: e.code});
+  });
+  addEventListener('keyup', (e) => send({t: 'up', key: e.key, code: e.code}));
+  addEventListener('blur', () => send({t: 'blur'}));
+
+  // the mouse, in the game's own pixels; moves once per screen refresh at most
+  let move = null;
+  const at = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return {x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height};
+  };
+  canvas.addEventListener('mousemove', (e) => {
+    const first = move === null;
+    move = at(e);
+    if (first) requestAnimationFrame(() => { send({t: 'move', ...move}); move = null; });
+  });
+  canvas.addEventListener('mousedown', (e) => { canvas.focus(); send({t: 'move', ...at(e)}); send({t: 'mdown', b: e.button + 1}); });
+  addEventListener('mouseup', (e) => send({t: 'mup', b: e.button + 1}));
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+})();
+</script>
+</body>
+</html>

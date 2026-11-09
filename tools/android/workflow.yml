@@ -1,0 +1,92 @@
+# A game as a native Android app (no browser: PHP, SDL, OpenGL ES and OpenAL in the app), built on GitHub and
+# published as a release of this repository: the APK (a phone) and the AAB (Google Play), signed with your upload
+# key. Started by `bin/jumphp android <game>` (it puts this file in .github/workflows/android.yml, sends the key to
+# the repository's secrets with your yes, pushes and runs it), or by hand: Actions > android > Run workflow.
+# The build: tools/android/build.sh in docker/android-native (JumPHP's docs/android-native.md).
+# Secrets: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD (alias: upload).
+name: android
+
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: 'The game or app (a folder of games/ or apps/)'
+        required: true
+      package:
+        description: 'The app package (io.github.me.my_game)'
+        required: true
+      version_code:
+        description: 'Version code (one more than the last on Google Play)'
+        required: true
+      version_name:
+        description: 'Version name (1.0, 1.1...)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GAME: ${{ inputs.game }}
+      NDK: 29.0.14206865
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Where the project is (games/<id>, else apps/<id>)
+        run: d="games/$GAME"; [ -d "$d" ] || d="apps/$GAME"; echo "GAME_DIR=$d" >> "$GITHUB_ENV"
+      - name: The game's vendor/ (composer, the engine from engine/)
+        run: |
+          test -d "$GAME_DIR" || { echo "no $GAME_DIR"; exit 1; }
+          docker run --rm --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer -v "$PWD:/app" -w "/app/$GAME_DIR" \
+            composer:2.8.12 install --no-dev --no-interaction --no-progress --ignore-platform-reqs
+
+      - name: A desktop app (ui webview) - its browser build, shown by the app's WebView
+        run: |
+          y="$GAME_DIR/config/project.yaml"; [ -f "$y" ] || y="$GAME_DIR/config/game.yaml"
+          if grep -qE '^[[:space:]]*ui:[[:space:]]*["'"'"']?webview' "$y"; then bin/jumphp engine:download && bin/jumphp build "$GAME"; fi
+
+      - name: The NDK (the runner's Android SDK)
+        run: |
+          echo "y" | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" > /dev/null
+          ls "$ANDROID_SDK_ROOT/ndk/$NDK" > /dev/null
+
+      # PHP per ABI, the sources and Gradle: kept between runs (a first build ~25 min, then ~8)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.jumphp/android-native
+          key: android-native-${{ hashFiles('tools/android/**', 'docker/standalone/registry/**', 'docker/ext/php-opengl.patch', 'docker/ext/php-sdl-events.patch') }}
+          restore-keys: android-native-
+
+      - name: Build (PHP + SDL + the game, arm64-v8a and x86_64)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p ~/.jumphp/android-native keys
+          if [ -n "$KEYSTORE_BASE64" ]; then printf '%s' "$KEYSTORE_BASE64" | base64 -d > keys/upload.keystore; fi
+          docker build -q -t jumphp/android-native docker/android-native
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD:/workspace" -v "$HOME/.jumphp/android-native:/cache" -v "$ANDROID_SDK_ROOT:/opt/android-sdk" -v "$PWD/keys:/keys" \
+            -e GAME -e NDK_VERSION="$NDK" -e "ABIS=arm64-v8a x86_64" \
+            -e PACKAGE="${{ inputs.package }}" -e VERSION_CODE="${{ inputs.version_code }}" -e VERSION_NAME="${{ inputs.version_name }}" \
+            -e KEYSTORE="$( [ -s keys/upload.keystore ] && echo /keys/upload.keystore )" -e KEYSTORE_PASSWORD -e KEY_PASSWORD -e KEY_ALIAS=upload \
+            jumphp/android-native bash /workspace/tools/android/build.sh
+          rm -rf keys
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ inputs.game }}-${{ inputs.version_name }}
+          path: ${{ env.GAME_DIR }}/dist/android-native/
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="android-$GAME-${{ inputs.version_name }}-${{ inputs.version_code }}"
+          gh release create "$tag" $GAME_DIR/dist/android-native/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title "$GAME ${{ inputs.version_name }} (Android, version ${{ inputs.version_code }})" \
+            --notes "The native Android app of $GAME: .apk for a phone, .aab for Google Play (docs: JumPHP's docs/android-native.md)."

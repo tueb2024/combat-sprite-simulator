@@ -1,0 +1,163 @@
+# A game as a native Apple app, macOS and iPhone / iPad (no browser: PHP, SDL, OpenGL and OpenAL in the app), built
+# on one of GitHub's Macs and published as a release of this repository: the macOS app (.dmg, .zip), the iPhone /
+# iPad app (.ipa) and the app for Xcode's simulator, with a screenshot of each running there.
+# Started by `bin/jumphp apple <game>` (it puts this file in .github/workflows/apple.yml, pushes and runs it), or by
+# hand: Actions > apple > Run workflow. The build: tools/apple/build.sh, the check: tools/apple/check.sh
+# (JumPHP's docs/apple.md). Without an Apple developer account the apps are signed "ad hoc" (docs/apple.md).
+name: apple
+
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: 'The game or app (a folder of games/ or apps/)'
+        required: true
+      bundle_id:
+        description: 'The bundle identifier (io.github.me.my-game)'
+        required: true
+      version:
+        description: 'Version (1.0, 1.1...)'
+        required: true
+        default: '1.0'
+      build:
+        description: 'Build number (one more at each build sent to Apple)'
+        required: true
+        default: '1'
+      platforms:
+        description: 'macos, ios or both'
+        required: true
+        default: 'macos ios'
+
+permissions:
+  contents: write
+
+jobs:
+  # a desktop app (ui: webview): its browser build (dist/web, Docker: not on GitHub's Macs), shown by the iOS app's WKWebView
+  web:
+    runs-on: ubuntu-latest
+    outputs:
+      webview: ${{ steps.kind.outputs.webview }}
+    env:
+      GAME: ${{ inputs.game || 'pong' }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: kind
+        run: |
+          d="games/$GAME"; [ -d "$d" ] || d="apps/$GAME"; echo "GAME_DIR=$d" >> "$GITHUB_ENV"
+          y="$d/config/project.yaml"; [ -f "$y" ] || y="$d/config/game.yaml"
+          if grep -qE '^[[:space:]]*ui:[[:space:]]*["'"'"']?webview' "$y"; then echo "webview=1" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.kind.outputs.webview == '1'
+        run: bin/jumphp engine:download && bin/jumphp build "$GAME"
+      - if: steps.kind.outputs.webview == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: ${{ env.GAME_DIR }}/dist/web/
+
+  app:
+    needs: web
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      GAME: ${{ inputs.game || 'pong' }}
+      BUNDLE_ID: ${{ inputs.bundle_id || 'io.github.jumphp.pong' }}
+      VERSION: ${{ inputs.version || '1.0' }}
+      BUILD: ${{ inputs.build || '1' }}
+      PLATFORMS: ${{ inputs.platforms || 'macos ios' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # the build's tools: PHP for the scripts and the game's composer install (the app has its own PHP)
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gd, mbstring
+          tools: composer
+          coverage: none
+
+      - name: Where the project is (games/<id>, else apps/<id>)
+        run: d="games/$GAME"; [ -d "$d" ] || d="apps/$GAME"; echo "GAME_DIR=$d" >> "$GITHUB_ENV"
+      - if: needs.web.outputs.webview == '1'
+        uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: ${{ env.GAME_DIR }}/dist/web/
+      - name: Tools (autoconf for PHP's configure)
+        run: brew list autoconf >/dev/null 2>&1 || brew install autoconf
+
+      # the game's files that are not in git (the data of an original game): bin/jumphp apple puts them in a draft
+      # release of the repository, which only its writers see
+      - name: The game's private files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "apple-private-$GAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download "apple-private-$GAME" -R "$GITHUB_REPOSITORY" -p private.tar.gz -D "$RUNNER_TEMP"
+            tar -xzf "$RUNNER_TEMP/private.tar.gz" -C "$GAME_DIR"
+            echo "private files in place: $(tar -tzf "$RUNNER_TEMP/private.tar.gz" | grep -vc '/$')"
+            # the apps contain them: their release is a draft (its owner decides whether to publish it)
+            echo "PRIVATE_FILES=1" >> "$GITHUB_ENV"
+            rm -f "$RUNNER_TEMP/private.tar.gz"
+          fi
+
+      - name: The game's vendor/ (composer, the engine from engine/)
+        run: |
+          test -d "$GAME_DIR" || { echo "no $GAME_DIR"; exit 1; }
+          composer install -d "$GAME_DIR" --no-dev --no-interaction --no-progress --ignore-platform-reqs
+
+      # PHP per target and the sources: kept between runs (a first build ~40 min, then ~10), even when a later step
+      # fails (what was built is kept)
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.jumphp/apple/downloads
+            ~/.jumphp/apple/src
+            ~/.jumphp/apple/include
+            ~/.jumphp/apple/php
+            ~/.jumphp/apple/php-tree
+          key: apple-${{ github.run_id }}
+          restore-keys: apple-
+
+      - name: Build (PHP + SDL + the game; macOS arm64 + x86_64, iPhone, simulator)
+        run: bash tools/apple/build.sh
+
+      - if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.jumphp/apple/downloads
+            ~/.jumphp/apple/src
+            ~/.jumphp/apple/include
+            ~/.jumphp/apple/php
+            ~/.jumphp/apple/php-tree
+          key: apple-${{ github.run_id }}
+
+      - name: Check (macOS headless, the iPhone simulator)
+        run: bash tools/apple/check.sh "$GAME" "$PLATFORMS"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-${{ env.GAME }}-${{ env.VERSION }}
+          path: |
+            ${{ env.GAME_DIR }}/dist/apple/*.zip
+            ${{ env.GAME_DIR }}/dist/apple/*.dmg
+            ${{ env.GAME_DIR }}/dist/apple/*.ipa
+            ${{ env.GAME_DIR }}/dist/apple/check/
+          if-no-files-found: ignore
+
+      - name: Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          tag="apple-$GAME-$VERSION-$BUILD"
+          cd "$GAME_DIR/dist/apple"
+          for f in check/*.png; do cp "$f" "$GAME-$VERSION-screenshot-$(basename "$f")"; done
+          files=(./*.zip ./*.dmg ./*.ipa ./*-screenshot-*.png)
+          draft=(); [ "${PRIVATE_FILES:-}" = 1 ] && draft=(--draft)
+          gh release create "$tag" "${files[@]}" "${draft[@]}" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title "$GAME $VERSION (macOS / iOS, build $BUILD)" \
+            --notes "The native Apple apps of $GAME: .dmg / -macos.zip for a Mac (Apple silicon and Intel), .ipa for an iPhone / iPad (to sign with an Apple developer account), -ios-simulator.zip for Xcode's simulator. Signed ad hoc: on a Mac, right click > Open the first time. Docs: JumPHP's docs/apple.md." \
+            || gh release upload "$tag" "${files[@]}" -R "$GITHUB_REPOSITORY" --clobber

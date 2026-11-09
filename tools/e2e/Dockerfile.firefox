@@ -1,0 +1,7 @@
+# The puppeteer image + the system libraries Firefox needs (puppeteer downloads Firefox itself, run.sh caches it).
+ARG BASE=ghcr.io/puppeteer/puppeteer:24.10.0
+FROM ${BASE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends libx11-xcb1 libgtk-3-0 libdbus-glib-1-2 libxt6 libxtst6 libasound2 libxcomposite1 libxdamage1 libxrandr2 libpci3 \
+    && rm -rf /var/lib/apt/lists/*
+USER pptruser

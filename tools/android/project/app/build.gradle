@@ -1,0 +1,66 @@
+// Filled in by tools/android/build.sh from the environment: JUMPHP_PACKAGE, JUMPHP_VERSION_CODE, JUMPHP_VERSION_NAME,
+// JUMPHP_ABIS, JUMPHP_PHP (PHP built per ABI), JUMPHP_SRC (SDL and the libraries' sources), and the signing key
+// (JUMPHP_KEYSTORE, JUMPHP_KEYSTORE_PASSWORD, JUMPHP_KEY_ALIAS, JUMPHP_KEY_PASSWORD).
+plugins {
+    id 'com.android.application'
+}
+
+def env = { String name, String fallback = null -> System.getenv(name) ?: fallback }
+
+android {
+    namespace 'net.jumphp.app'
+    compileSdk 36
+    ndkVersion env('JUMPHP_NDK', '29.0.14206865')
+
+    defaultConfig {
+        applicationId env('JUMPHP_PACKAGE', 'net.jumphp.game')
+        minSdk 26
+        targetSdk 36
+        versionCode Integer.parseInt(env('JUMPHP_VERSION_CODE', '1'))
+        versionName env('JUMPHP_VERSION_NAME', '1.0')
+        ndk {
+            abiFilters(*env('JUMPHP_ABIS', 'arm64-v8a x86_64').split(' '))
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DJUMPHP_PHP=${env('JUMPHP_PHP', '/cache/php')}", "-DJUMPHP_SRC=${env('JUMPHP_SRC', '/cache/src')}",
+                    '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (env('JUMPHP_KEYSTORE')) {
+                storeFile file(env('JUMPHP_KEYSTORE'))
+                storePassword env('JUMPHP_KEYSTORE_PASSWORD')
+                keyAlias env('JUMPHP_KEY_ALIAS')
+                keyPassword env('JUMPHP_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig env('JUMPHP_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.31.8'
+        }
+    }
+
+    // the game is large and already compressed where it matters (pictures, sounds): stored as is
+    androidResources {
+        noCompress 'tar'
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

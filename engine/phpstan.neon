@@ -1,0 +1,18 @@
+parameters:
+    level: 5
+    paths: [src]
+    scanFiles: [stubs/sdl.stub.php, stubs/async.stub.php, stubs/opengl.stub.php, stubs/openal.stub.php]
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # traits are composed by the games (Sprite, Gravity, TileCollision)
+        - identifier: trait.unused
+        # SDL calls return false on failure, whatever the generated stubs say
+        - identifier: booleanNot.alwaysFalse
+        # entities get these from optional traits, checked with method_exists / property_exists
+        - identifier: method.notFound
+          path: src/Entity/Entity.php
+        - identifier: property.notFound
+          path: src/Physics/CollisionSystem.php
+        # generated at packaging time by tools/dump-container.php
+        - identifier: class.notFound
+          path: src/Kernel/Application.php

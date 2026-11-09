@@ -1,0 +1,10 @@
+ARG_ENABLE('sdl_ttf', 'SDL2_ttf (JumPHP)', 'no');
+if (PHP_SDL_TTF != 'no') {
+    jumphp_libs('sdl_ttf', ['SDL2_ttf-static.lib;SDL2_ttf.lib', 'freetype.lib;freetyped.lib']);
+    EXTENSION('sdl_ttf', 'sdl_ttf.c', PHP_SDL_TTF_SHARED, '/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1');
+    jumphp_includes('sdl_ttf');
+    ADD_EXTENSION_DEP('sdl_ttf', 'sdl');
+    AC_DEFINE('WITH_SDL_TTF', 1);
+    AC_DEFINE('HAVE_SDL_TTF_H', 1);
+    AC_DEFINE('HAVE_SDL_TTF', 1);
+}

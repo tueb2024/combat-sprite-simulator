@@ -1,0 +1,34 @@
+/build/
+/.build/
+/.cache/
+/.env
+# composer create-project leaves these at the root (the root package has no dependency)
+/vendor/
+/composer.lock
+/engine/vendor/
+/engine/composer.lock
+/engine/.phpunit.cache/
+/games/*/vendor/
+/games/*/var/*
+!/games/*/var/.gitkeep
+/games/*/dist/
+/games/*/cache/
+
+# crash dumps
+core
+core.[0-9]*
+/var/
+
+# the IDE package (ide/): its dev dependencies and vendored editor
+/ide/vendor/
+/ide/composer.lock
+/ide/.phpunit.cache/
+/ide/ui/vendor/
+
+# what the AI assistants did (IDE history): private to this computer
+/IA/
+/todo-migration-git.md
+/update.json
+/.git-project/
+/artifacts/
+/.write-check

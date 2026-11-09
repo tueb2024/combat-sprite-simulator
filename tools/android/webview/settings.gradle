@@ -1,0 +1,17 @@
+// A JumPHP desktop app (ui: webview) as a native Android app: a WebView showing the app's browser build
+// (tools/android/build.sh fills in the app, its name, package and icons).
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'jumphp-webapp'
+include ':app'

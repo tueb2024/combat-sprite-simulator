@@ -1,0 +1,1 @@
+bcmath,phar,zlib,mbstring,ctype,tokenizer,filter,sockets,openssl,pcntl,posix,ffi

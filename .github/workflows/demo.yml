@@ -1,0 +1,30 @@
+name: demo
+on:
+  push:
+    branches: [feature/first-playable]
+  workflow_dispatch:
+jobs:
+  jumphp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: bin/jumphp install combat-sprite-simulator
+      - name: Test
+        run: bin/jumphp test combat-sprite-simulator
+      - name: Headless screenshot
+        run: bin/jumphp shot combat-sprite-simulator 120
+      - name: Browser engine
+        run: bin/jumphp engine:download
+      - name: Browser build
+        run: bin/jumphp build combat-sprite-simulator
+      - name: Browser screenshot
+        run: bin/jumphp webshot combat-sprite-simulator 8 '[[1,"Enter"]]'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-captures
+          path: |
+            games/combat-sprite-simulator/var/screenshots/
+            games/combat-sprite-simulator/dist/webshot.png

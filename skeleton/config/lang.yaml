@@ -1,0 +1,11 @@
+# Translations: source strings (English) => other languages. Lang::t('PLAY'); Menu labels are translated.
+fr:
+  PLAY: JOUER
+  OPTIONS: OPTIONS
+  QUIT: QUITTER
+  RESUME: REPRENDRE
+  TITLE SCREEN: ECRAN TITRE
+  SOUND: SON
+  LANGUAGE: LANGUE
+  BACK: RETOUR
+  COINS: PIECES

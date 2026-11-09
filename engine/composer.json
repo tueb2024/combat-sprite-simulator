@@ -1,0 +1,35 @@
+{
+    "name": "jumphp/engine",
+    "description": "JumPHP: a PHP engine for retro 2D games (SDL2) running natively and in the browser (WebAssembly).",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["game", "engine", "sdl", "2d", "retro", "webassembly", "wasm", "tiles"],
+    "require": {
+        "php": ">=8.2",
+        "davidnurdin/php-wasm-network": "dev-main#d273712204a378f656fd3e73cc0e06994249c464",
+        "evenement/evenement": "^3.0",
+        "laravel/serializable-closure": "^2.0",
+        "react/event-loop": "^1.5",
+        "symfony/config": "^7.2",
+        "symfony/dependency-injection": "^7.2",
+        "symfony/yaml": "^7.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5",
+        "phpstan/phpstan": "^2.1"
+    },
+    "repositories": [
+        { "type": "vcs", "url": "https://git.jumphp.net/jumphp/php-wasm-network" }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "autoload": {
+        "psr-4": { "JumPHP\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "JumPHP\\Tests\\": "tests/" }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

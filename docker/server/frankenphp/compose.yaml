@@ -1,0 +1,20 @@
+# FrankenPHP alone: serves the games over HTTPS, certificates from Let's Encrypt (Caddy). bin/jumphp deploy.
+services:
+  web:
+    image: ${JUMPHP_WEB_IMAGE}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SERVER_NAME: ${JUMPHP_DOMAIN}
+      ACME_EMAIL: ${JUMPHP_ACME_EMAIL}
+    volumes:
+      - ./site:/srv:ro
+      - ./Caddyfile:/etc/frankenphp/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:

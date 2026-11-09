@@ -1,0 +1,11 @@
+ARG_ENABLE('sdl_mixer', 'SDL2_mixer (JumPHP)', 'no');
+if (PHP_SDL_MIXER != 'no') {
+    jumphp_libs('sdl_mixer', ['SDL2_mixer-static.lib;SDL2_mixer.lib']);
+    EXTENSION('sdl_mixer', 'php_sdl_mixer.c', PHP_SDL_MIXER_SHARED, '/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1');
+    ADD_SOURCES(configure_module_dirname + '\\src', 'effect_position.c effect_stereoreverse.c Mix_Music.c Mix_Chunk.c ' +
+        'music.c mixer.c', 'sdl_mixer');
+    jumphp_includes('sdl_mixer');
+    ADD_EXTENSION_DEP('sdl_mixer', 'sdl');
+    AC_DEFINE('HAVE_SDL_MIXER', 1);
+    AC_DEFINE('HAVE_SDL_MIXER_FEATURE', 1);
+}

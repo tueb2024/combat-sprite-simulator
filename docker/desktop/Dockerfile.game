@@ -1,0 +1,7 @@
+# A self-contained desktop image of one game (bin/jumphp export:desktop <game>): the runtime + the staged game.
+ARG BASE=jumphp/desktop:dev
+FROM ${BASE}
+COPY . /game
+WORKDIR /game
+RUN mkdir -p /game/var && chmod 777 /game/var
+CMD ["php", "app.php"]

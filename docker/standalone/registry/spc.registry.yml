@@ -1,0 +1,10 @@
+# JumPHP's packages for StaticPHP (static-php-cli v3): what a game needs that StaticPHP does not ship.
+# Loaded with SPC_REGISTRIES=<this file> (docker/standalone, bin/jumphp export:standalone; StaticPHP patched by
+# docker/standalone/spc-registries.php to load an external registry's packages). functions.php: Windows helpers.
+name: jumphp
+autoload: functions.php
+package:
+  config:
+    - config/
+  psr-4:
+    JumPHP\Standalone: src

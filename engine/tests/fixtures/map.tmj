@@ -1,0 +1,128 @@
+{
+ "type": "map",
+ "orientation": "orthogonal",
+ "width": 4,
+ "height": 2,
+ "tilewidth": 16,
+ "tileheight": 16,
+ "infinite": false,
+ "backgroundcolor": "#203040",
+ "properties": [
+  {
+   "name": "music",
+   "type": "string",
+   "value": "level1"
+  }
+ ],
+ "tilesets": [
+  {
+   "firstgid": 1,
+   "name": "tiles",
+   "image": "../img/tiles.png",
+   "imagewidth": 64,
+   "imageheight": 16,
+   "tilewidth": 16,
+   "tileheight": 16,
+   "columns": 4,
+   "tilecount": 4,
+   "tiles": [
+    {
+     "id": 0,
+     "properties": [
+      {
+       "name": "collision",
+       "type": "string",
+       "value": "oneway"
+      }
+     ]
+    },
+    {
+     "id": 1,
+     "animation": [
+      {
+       "tileid": 1,
+       "duration": 100
+      },
+      {
+       "tileid": 2,
+       "duration": 100
+      }
+     ],
+     "properties": [
+      {
+       "name": "hazard",
+       "type": "bool",
+       "value": true
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "layers": [
+  {
+   "type": "tilelayer",
+   "name": "collision",
+   "width": 4,
+   "height": 2,
+   "encoding": "base64",
+   "data": "AAAAAAEAAAACAAAAAgAAgAAAAAAAAAAAAQAAAAEAAAA=",
+   "visible": true
+  },
+  {
+   "type": "tilelayer",
+   "name": "front",
+   "width": 4,
+   "height": 2,
+   "data": [
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0
+   ],
+   "properties": [
+    {
+     "name": "foreground",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "type": "objectgroup",
+   "name": "objects",
+   "objects": [
+    {
+     "id": 1,
+     "name": "start",
+     "type": "spawn",
+     "x": 8,
+     "y": 4,
+     "width": 0,
+     "height": 0
+    },
+    {
+     "id": 2,
+     "name": "",
+     "type": "coin",
+     "gid": 2,
+     "x": 32,
+     "y": 32,
+     "width": 16,
+     "height": 16,
+     "properties": [
+      {
+       "name": "value",
+       "type": "int",
+       "value": 5
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

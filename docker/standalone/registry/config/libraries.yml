@@ -1,0 +1,90 @@
+# SDL2 and its add-ons, OpenAL: static libraries. On Linux SDL and OpenAL load X11, OpenGL, ALSA and PulseAudio
+# from the player's system when the game starts (dlopen): nothing of them is linked.
+sdl2:
+  type: library
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz'
+    metadata:
+      license-files: [LICENSE.txt]
+      license: Zlib
+  headers:
+    - SDL2/SDL.h
+  static-libs@unix:
+    - libSDL2.a
+  static-libs@windows:
+    - SDL2-static.lib
+
+sdl2_image:
+  type: library
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.12/SDL2_image-2.8.12.tar.gz'
+    metadata:
+      license-files: [LICENSE.txt]
+      license: Zlib
+  depends:
+    - sdl2
+  headers:
+    - SDL2/SDL_image.h
+  static-libs@unix:
+    - libSDL2_image.a
+  static-libs@windows:
+    - SDL2_image-static.lib
+
+sdl2_mixer:
+  type: library
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.2/SDL2_mixer-2.8.2.tar.gz'
+    metadata:
+      license-files: [LICENSE.txt]
+      license: Zlib
+  depends:
+    - sdl2
+  headers:
+    - SDL2/SDL_mixer.h
+  static-libs@unix:
+    - libSDL2_mixer.a
+  static-libs@windows:
+    - SDL2_mixer-static.lib
+
+sdl2_ttf:
+  type: library
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.tar.gz'
+    metadata:
+      license-files: [LICENSE.txt]
+      license: Zlib
+  depends:
+    - sdl2
+
+  headers:
+    - SDL2/SDL_ttf.h
+  static-libs@unix:
+    - libSDL2_ttf.a
+    - libfreetype.a
+  static-libs@windows:
+    - SDL2_ttf-static.lib
+
+openal:
+  type: library
+  lang: cpp
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/kcat/openal-soft/archive/refs/tags/1.25.2.tar.gz'
+    metadata:
+      license-files: [COPYING]
+      license: LGPL-2.0-or-later
+  headers:
+    - AL/al.h
+  static-libs@unix:
+    - libopenal.a
+  static-libs@windows:
+    - OpenAL32.lib

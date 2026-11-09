@@ -1,0 +1,6 @@
+game:
+  id: fixture-app
+  title: "Fixture App"
+  ui: webview
+  app:
+    window: { width: 640, height: 400 }

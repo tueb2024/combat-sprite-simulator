@@ -1,0 +1,6 @@
+/vendor/
+/var/*
+!/var/.gitkeep
+/dist/
+/.build/
+/cache/

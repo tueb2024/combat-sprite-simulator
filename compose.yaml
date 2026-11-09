@@ -1,0 +1,14 @@
+# Services used by bin/jumphp. The desktop runtime and the engine are built by bin/jumphp (setup / engine:build).
+services:
+  # multiplayer relay server: ws://localhost:8090/ws (bin/jumphp relay up)
+  relay:
+    build: docker/relay
+    image: jumphp/relay:dev
+    ports:
+      - "${JUMPHP_RELAY_PORT:-8090}:8090"
+    environment:
+      # optional TURN server for WebRTC behind strict NATs (see php-wasm-network server/README)
+      TURN_SECRET: "${TURN_SECRET:-}"
+      TURN_URLS: "${TURN_URLS:-}"
+      STUN_URLS: "${STUN_URLS:-}"
+    restart: unless-stopped

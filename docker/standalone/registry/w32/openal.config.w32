@@ -1,0 +1,10 @@
+ARG_WITH('openal', 'OpenAL Soft (JumPHP)', 'no');
+if (PHP_OPENAL != 'no') {
+    jumphp_libs('openal', ['OpenAL32.lib;openal.lib', 'winmm.lib', 'ole32.lib', 'avrt.lib', 'uuid.lib']);
+    EXTENSION('openal', 'php_openal.c', PHP_OPENAL_SHARED, '/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1 /DAL_LIBTYPE_STATIC');
+    jumphp_includes('openal');
+    AC_DEFINE('WITH_OPENAL', 1);
+    AC_DEFINE('HAVE_AL_AL_H', 1);
+    AC_DEFINE('HAVE_AL_ALC_H', 1);
+    AC_DEFINE('HAVE_AL_ALEXT_H', 1);
+}

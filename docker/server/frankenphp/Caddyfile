@@ -1,0 +1,15 @@
+# The games (static files: PHP runs in the player's browser), HTTPS by Let's Encrypt. bin/jumphp deploy.
+{
+	frankenphp
+	email {$ACME_EMAIL}
+}
+
+{$SERVER_NAME} {
+	root * /srv
+	encode zstd gzip
+	file_server
+	header /version.json Cache-Control "no-store"
+	header /*/version.json Cache-Control "no-store"
+	header /index.html Cache-Control "no-cache"
+	header /*/index.html Cache-Control "no-cache"
+}

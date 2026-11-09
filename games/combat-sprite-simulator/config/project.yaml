@@ -1,0 +1,16 @@
+project:
+  id: combat-sprite-simulator
+  title: "Combat Sprite Simulator"
+  version: 0.1.0
+  description: "A vertical arcade flight battle inspired by 1940."
+  descriptions: {fr: "Combat aérien arcade en 1940.", en: "A 1940 arcade flight battle."}
+  width: 320
+  height: 480
+  scale: 2
+  background: [28, 45, 40]
+  start_scene: App\Scene\TitleScene
+  controls: "Arrows/WASD move; Space fires; Enter starts and restarts"
+  touch: {a: Space, start: Return, pad: stick}
+  smoke:
+    scene: App\Scene\PlayScene
+    params: {demo: true}

@@ -1,0 +1,27 @@
+# FrankenPHP serving the games behind a Traefik already running on the server (its network, entry point and
+# certificate resolver come from .env: JUMPHP_TRAEFIK_NETWORK / _ENTRYPOINT / _RESOLVER). bin/jumphp deploy.
+services:
+  web:
+    image: ${JUMPHP_WEB_IMAGE}
+    restart: unless-stopped
+    volumes:
+      - ./site:/srv:ro
+      - ./Caddyfile:/etc/frankenphp/Caddyfile:ro
+    # the image's own check asks Caddy's admin API, which this Caddyfile turns off: Traefik skips unhealthy containers
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      start_period: 3s
+    networks: [traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${JUMPHP_TRAEFIK_NETWORK}
+      - traefik.http.routers.${JUMPHP_ID}.rule=Host(`${JUMPHP_DOMAIN}`)
+      - traefik.http.routers.${JUMPHP_ID}.entrypoints=${JUMPHP_TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.${JUMPHP_ID}.tls.certresolver=${JUMPHP_TRAEFIK_RESOLVER}
+      - traefik.http.services.${JUMPHP_ID}.loadbalancer.server.port=80
+networks:
+  traefik:
+    name: ${JUMPHP_TRAEFIK_NETWORK}
+    external: true

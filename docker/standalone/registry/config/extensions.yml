@@ -1,0 +1,103 @@
+# The PHP extensions of JumPHP's desktop runtime (docker/desktop: the same commits), compiled into PHP.
+ext-sdl:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://git.jumphp.net/jumphp/php-sdl/archive/89855c8f4f63b77f9a548007b9c4afe366785b4b.tar.gz'
+      extract: php-src/ext/sdl
+    metadata:
+      license-files: [LICENSE]
+      license: MIT
+  depends:
+    - sdl2
+  php-extension:
+    arg-type@unix: '--with-sdl=@build_root_path@/bin/sdl2-config'
+    arg-type@windows: '--enable-sdl'
+    display-name: SDL
+
+ext-sdl_image:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/kea/php-sdl-image/archive/fd798eb2c52b7be5874a30334d1d255436aa686e.tar.gz'
+      extract: php-src/ext/sdl_image
+    metadata:
+      license-files: [LICENSE]
+      license: Zlib
+  depends:
+    - ext-sdl
+    - sdl2_image
+  php-extension:
+    arg-type@unix: '--with-sdl_image=@build_root_path@'
+    arg-type@windows: '--enable-sdl_image'
+    display-name: ''
+
+ext-sdl_mixer:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/kea/php-sdl-mixer/archive/f75a31826f4484bb4af31c1a1a4cdf1463aae8b2.tar.gz'
+      extract: php-src/ext/sdl_mixer
+    metadata:
+      license-files: [LICENSE]
+      license: Zlib
+  depends:
+    - ext-sdl
+    - sdl2_mixer
+  php-extension:
+    arg-type@unix: '--with-sdl_mixer=@build_root_path@'
+    arg-type@windows: '--enable-sdl_mixer'
+    display-name: ''
+
+ext-sdl_ttf:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/kea/php-sdl-ttf/archive/d2c634c509aa0b14168f55128435d9519d34d0e3.tar.gz'
+      extract: php-src/ext/sdl_ttf
+    metadata:
+      license-files: [LICENSE]
+      license: Zlib
+  depends:
+    - ext-sdl
+    - sdl2_ttf
+  php-extension:
+    arg-type@unix: '--enable-sdl_ttf=@build_root_path@'
+    arg-type@windows: '--enable-sdl_ttf'
+    display-name: ''
+
+ext-opengl:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/Ponup/php-opengl/archive/438798d5f0a5347a59d13252611556792cc2a1b8.tar.gz'
+      extract: php-src/ext/opengl
+    metadata:
+      license-files: [LICENSE]
+      license: MIT
+  php-extension:
+    arg-type@unix: '--with-opengl=@build_root_path@'
+    arg-type@windows: '--with-opengl'
+    display-name: ''
+
+ext-openal:
+  type: php-extension
+  artifact:
+    source:
+      type: url
+      url: 'https://github.com/Ponup/php-openal/archive/6f78e95120ffe2cd30813a78ca66eaedde310314.tar.gz'
+      extract: php-src/ext/openal
+    metadata:
+      license-files: [LICENSE]
+      license: MIT
+  depends:
+    - openal
+  php-extension:
+    arg-type@unix: '--with-openal=@build_root_path@'
+    arg-type@windows: '--with-openal'
+    display-name: ''

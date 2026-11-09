@@ -1,0 +1,12 @@
+#!/bin/sh
+# jumphp-xvfb <command...>: runs the command with a virtual X display (Xvfb, Mesa llvmpipe OpenGL), for headless
+# runs of games that use OpenGL (bin/jumphp test / shot). xvfb-run hangs when the container runs as a plain user.
+display=:${JUMPHP_XVFB_DISPLAY:-99}
+Xvfb "$display" -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+xvfb=$!
+i=0
+while [ ! -e "/tmp/.X11-unix/X${display#:}" ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+DISPLAY=$display "$@"
+status=$?
+kill "$xvfb" 2>/dev/null
+exit $status

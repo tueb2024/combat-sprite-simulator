@@ -1,0 +1,49 @@
+// Filled in by tools/android/build.sh from the environment: JUMPHP_PACKAGE, JUMPHP_VERSION_CODE, JUMPHP_VERSION_NAME
+// and the signing key (JUMPHP_KEYSTORE, JUMPHP_KEYSTORE_PASSWORD, JUMPHP_KEY_ALIAS, JUMPHP_KEY_PASSWORD). No native
+// code: PHP is the browser build's WebAssembly engine, in assets/web/.
+plugins {
+    id 'com.android.application'
+}
+
+def env = { String name, String fallback = null -> System.getenv(name) ?: fallback }
+
+android {
+    namespace 'net.jumphp.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId env('JUMPHP_PACKAGE', 'net.jumphp.webapp')
+        minSdk 26
+        targetSdk 36
+        versionCode Integer.parseInt(env('JUMPHP_VERSION_CODE', '1'))
+        versionName env('JUMPHP_VERSION_NAME', '1.0')
+    }
+
+    signingConfigs {
+        release {
+            if (env('JUMPHP_KEYSTORE')) {
+                storeFile file(env('JUMPHP_KEYSTORE'))
+                storePassword env('JUMPHP_KEYSTORE_PASSWORD')
+                keyAlias env('JUMPHP_KEY_ALIAS')
+                keyPassword env('JUMPHP_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig env('JUMPHP_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    // read as they are by the WebView (application/wasm streams, packs)
+    androidResources {
+        noCompress 'wasm', 'data', 'pack', 'tar'
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

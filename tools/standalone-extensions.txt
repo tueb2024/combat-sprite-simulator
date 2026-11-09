@@ -1,0 +1,1 @@
+bcmath,phar,zlib,zip,gd,mbstring,ctype,tokenizer,filter,sockets,openssl,pcntl,posix,sdl,sdl_image,sdl_mixer,sdl_ttf,opengl,openal

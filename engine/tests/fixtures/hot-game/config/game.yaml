@@ -1,0 +1,7 @@
+game:
+  id: hot-game
+  title: HOT GAME
+  width: 64
+  height: 36
+  start_scene: JumPHP\Tests\Debug\HotScene
+  start_params: { level: 2 }

@@ -1,0 +1,1875 @@
+#!/usr/bin/env bash
+# JumPHP command line: everything runs in Docker, the host only needs docker (and a display + sound
+# server to play on desktop). `bin/jumphp help` lists the commands.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# `gh` for every forge: GitHub (the real gh) or git.jumphp.net (tools/forge.php): scripts just call `gh`
+export PATH="$ROOT/tools/bin:$PATH"
+CALLER_DIR="$PWD"     # where the command was typed (run inside games/<id> or apps/<id>: that one)
+cd "$ROOT"
+
+# Git Bash (MSYS) on Windows: the container's paths (/workspace...) must not be turned into Windows paths, and the
+# host's folders mounted with -v must be given to Docker as Windows paths (/c/Users/x:/workspace -> C:/Users/x:/workspace;
+# also /tmp/..., Git Bash's name for the Windows temporary folder)
+if [ -n "${MSYSTEM:-}" ] && command -v cygpath >/dev/null 2>&1; then
+  export MSYS_NO_PATHCONV=1
+  docker() {
+    local args=() a
+    for a in "$@"; do
+      case "$a" in
+        /[!/]*:/*) args+=("$(cygpath -m "${a%%:/*}"):/${a#*:/}") ;;
+        *) args+=("$a") ;;
+      esac
+    done
+    # the folders mounted from Windows are not writable by the headless Chrome image's own user: root there
+    # (its scripts already start Chrome with --no-sandbox)
+    if [ "${args[0]:-}" = run ] && [[ " ${args[*]} " == *" ${PUPPETEER_IMAGE:-none} "* ]]; then
+      args=(run --user 0:0 -e PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer "${args[@]:1}")
+    fi
+    command docker "${args[@]}"
+  }
+  # curl is a Windows program there: the files it writes (mktemp's /tmp/...) as Windows paths. Only the argument that
+  # follows an output option (-o, --output, -D, --dump-header, -c, --cookie-jar) is a file: a URL path or a value given to
+  # another option (--data /x) is never touched
+  curl() {
+    local args=() a file=0
+    for a in "$@"; do
+      if [ "$file" = 1 ]; then
+        file=0
+        if [[ "$a" == /* && -d "$(dirname "$a")" ]]; then a="$(cygpath -m "$a")"; fi
+      else
+        case "$a" in
+          -o|--output|-D|--dump-header|-c|--cookie-jar) file=1 ;;
+          --output=/*|--dump-header=/*|--cookie-jar=/*)
+            if [[ -d "$(dirname "${a#*=}")" ]]; then a="${a%%=*}=$(cygpath -m "${a#*=}")"; fi ;;
+        esac
+      fi
+      args+=("$a")
+    done
+    command curl "${args[@]}"
+  }
+fi
+# The images are built with BuildKit (`docker build --build-context`): a Docker Engine installed from Ubuntu's own packages (docker.io, the usual
+# one inside WSL) has no buildx and fails with "unknown flag: --build-context": say what to install instead
+need_buildx() {
+  docker buildx version >/dev/null 2>&1 && return 0
+  echo "[x] This Docker has no buildx, which the images need (docker build --build-context)." >&2
+  echo "    Docker Desktop has it. A Docker Engine from Ubuntu needs: sudo apt install docker-buildx" >&2
+  echo "    (or Docker's own repository: docker-ce + docker-buildx-plugin). See docs/windows-wsl.md." >&2
+  exit 1
+}
+[ -f .env ] && set -a && . ./.env && set +a
+# JUMPHP_APP is the new name of JUMPHP_GAME (both read; the project a command means when none is named)
+JUMPHP_GAME="${JUMPHP_APP:-${JUMPHP_GAME:-}}"
+# Windows with Docker Engine inside WSL (no Docker Desktop): this run goes on inside WSL (tools/wsl.sh, docs/windows-wsl.md)
+. "$ROOT/tools/wsl.sh"
+if jumphp_wsl_wanted; then jumphp_wsl_exec "$(pwd -W 2>/dev/null || pwd)" "$(cd "$CALLER_DIR" && { pwd -W 2>/dev/null || pwd; })" "$@"; fi
+
+DESKTOP_IMAGE="${JUMPHP_DESKTOP_IMAGE:-jumphp/desktop:dev}"
+DESKTOP_REV=4     # the runtime image's revision (docker/desktop/Dockerfile LABEL jumphp.rev): a changed one rebuilds it (2: xclip / wl-clipboard, the apps' copy and paste; 3: Mesa 25 from backports, 4: + Vulkan drivers: recent GPUs instead of llvmpipe)
+XDEBUG_IMAGE="${JUMPHP_XDEBUG_IMAGE:-jumphp/desktop-xdebug:dev}"
+# runtime "async" (game.yaml `runtime: async`): PHP 8.6 ZTS + TrueAsync (threads, coroutines)
+ASYNC_IMAGE="${JUMPHP_ASYNC_IMAGE:-jumphp/desktop-async:dev}"
+XDEBUG_ASYNC_IMAGE="${JUMPHP_XDEBUG_ASYNC_IMAGE:-jumphp/desktop-async-xdebug:dev}"
+EMSDK_IMAGE="${JUMPHP_EMSDK_IMAGE:-emscripten/emsdk:3.1.35}"
+WEB_IMAGE="${JUMPHP_WEB_IMAGE:-dunglas/frankenphp:1.12.7-alpine}"
+PUPPETEER_IMAGE="${JUMPHP_PUPPETEER_IMAGE:-ghcr.io/puppeteer/puppeteer:24.10.0}"
+TRAEFIK_IMAGE="${JUMPHP_TRAEFIK_IMAGE:-traefik:v3.7}"
+# the JumPHP repository: prebuilt engines (releases of git.jumphp.net), `bin/jumphp update`
+REPO_URL="${JUMPHP_REPO:-https://git.jumphp.net/jumphp/jumPhp.git}"
+ENGINE_DIR="$ROOT/build/engine"
+BUILDER="${JUMPHP_BUILDER:-jumphp-builder}"
+TTY_FLAGS=$([ -t 0 ] && [ -t 1 ] && echo "-it" || echo "-i")
+# the project in the containers: /workspace. Games are in games/<id>, the other projects (apps, CLI apps, IDE plugins)
+# in apps/<id> (older projects keep them in games/). A project folder may be a symbolic link to a folder elsewhere (a
+# project kept in its own repository, its composer.json pointing at ../../engine: the JumPHP IDE links it into its
+# copy of JumPHP): then that parent is an empty folder in the container, each project mounted at /workspace/<parent>/<id>.
+WS=(-v "$ROOT:/workspace")
+for _p in games apps; do
+  for _g in "$ROOT/$_p"/*; do
+    if [ -L "$_g" ] && [ -d "$_g" ]; then
+      # composer copies the engine into their vendor/ (a link to ../../engine would be broken outside the containers)
+      WS+=(--mount "type=tmpfs,dst=/workspace/$_p" -e COMPOSER_MIRROR_PATH_REPOS=1)
+      for _g in "$ROOT/$_p"/*; do [ -d "$_g" ] && WS+=(-v "$(cd "$_g" && pwd -P):/workspace/$_p/$(basename "$_g")"); done
+      break
+    fi
+  done
+done
+unset _g _p
+
+say()  { printf '\033[1;36m==> %s\033[0m\n' "$*" >&2; }
+warn() { printf '\033[1;33m[!] %s\033[0m\n' "$*" >&2; }
+die()  { printf '\033[1;31m[x] %s\033[0m\n' "$*" >&2; exit 1; }
+
+# The project's own GitHub repository (owner/name, from the remote origin). Never JumPHP's: a project made from
+# JumPHP keeps it as the remote "jumphp" (bin/jumphp update), and publishing there would put the project on the
+# framework. Only JumPHP's own checkout (no remote "jumphp", no .jumphp/jumphp.json) publishes to JumPHP's repository.
+project_github_repo() {
+  local url repo
+  url="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" || return 1
+  repo="$(printf '%s' "$url" | sed -E 's#^(https?://([^@/]*@)?[^/]+/|git@[^:]+:|ssh://git@[^/]+/)##; s#\.git$##; s#/$##')"
+  [[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  if [[ "${repo,,}" =~ ^(davidnurdin|jumphp)/jumphp$ ]] && { git -C "$ROOT" remote get-url jumphp >/dev/null 2>&1 || [ -f "$ROOT/.jumphp/jumphp.json" ]; }; then
+    warn "the remote origin is JumPHP's repository ($repo), not this project's: nothing is published there"
+    return 1
+  fi
+  printf '%s\n' "$repo"
+}
+
+# Is the remote origin a forge (git.jumphp.net, Forgejo) and not github.com? Its Actions runners are the project's choice
+# (docs/ci-runner.md); there is no macOS runner there yet (todo-migration-git.md), so Apple builds need GitHub's Macs.
+origin_is_forge() {
+  local url; url="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" || return 1
+  [[ ! "$url" =~ github\.com ]]
+}
+
+usage() {
+  cat <<'EOF'
+JumPHP - retro 2D games in PHP (SDL), desktop + browser. Everything runs in Docker.
+
+Setup
+  init                      interactive wizard: tools, your game, engine, server, GitHub, then Claude Code
+                            (also what `bin/jumphp` alone runs in a project without a game yet)
+  setup [async]             build the Docker images (desktop runtime, relay server; async: PHP 8.6 ZTS + TrueAsync)
+  engine:download [version] download the prebuilt WebAssembly engine of this version (release of git.jumphp.net)
+  engine:build              build the WebAssembly engine (PHP + SDL -> build/engine, ~25 min once, cached)
+  runner:install [--forge URL] --scope org/NAME|user/NAME [--name N] [--labels L]   a CI runner in Docker (git.jumphp.net), docs/ci-runner.md
+  runner:remove [--name N]  stop and delete that runner
+  runner:scripts [DIR]      the runner install scripts (Windows .ps1, WSL, Windows VM for Linux): print their folder, or copy it to DIR
+  engine:pack               build/engine -> .build/jumphp-engine.tar.gz (+ .sha256), the release asset
+  runtime:build             the shared engine of remote games (a games site) -> build/runtime
+                            + .build/jumphp-runtime.tar.gz (+ .sha256), the release asset (docs/remote.md)
+  runtime:download [version]  download it from the release instead
+  ssh:build                 OpenSSH's ssh client as WebAssembly (docker/ssh-wasm) -> build/ssh/ssh.js + ssh.wasm, packed in the runtime (docs/ssh-wasm.md)
+  tidy [--examples] [--yes]  remove JumPHP's own development files from this project (tools/project-clean.list)
+  update                    merge the newest JumPHP (git remote "jumphp") into the project
+  forge:migrate [--dry-run]  moves this project's JumPHP addresses from GitHub to git.jumphp.net (composer, locks, scripts, docs, remotes)
+  cli:install               the `jumphp` command for the whole system (~/.local/bin): `jumphp test pong` from
+                            any folder of the project, `jumphp new <folder>`; asks to update when Packagist has
+                            a newer JumPHP (once a day; JUMPHP_NO_UPDATE_CHECK=1: never)
+  cli:uninstall             remove it
+  doctor                    check docker, display, sound
+
+Games (<game> = a folder of games/, e.g. pong)
+  new <game> [title]        create games/<game> from skeleton/
+  gui:new <app> [title] [--mobile]  a graphic PHP app (forms of the IDE's visual editor, JumPHP\Gui: no HTML)
+                            from skeleton-gui/; --mobile: a phone app (portrait). run / test / shot / build / export as games
+  video <app> <file.mp4> [name] [fps]  a film as frames for the Video widget: assets/videos/<name>/ (+ audio.ogg)
+  install <game>            composer install (engine linked from engine/)
+  composer <game> <args>    any composer command in the game
+  run [game] [args...]      play on desktop (window + sound); no id: the folder of games/ or apps/ you are in,
+                            else JUMPHP_APP (.env), else the only project
+  test <game> [tests/X.php]  lint + phpstan (if configured) + phpunit (if tests/) + headless smoke test; a test file: only its tests
+  shot <game> [frames] [out.png]   headless screenshot after N frames (default 120) -> var/screenshots/
+  build <game>              browser build -> games/<game>/dist/web (static files)
+  build:remote <game>       the game as a remote game (shared engine, files one by one) -> dist/remote
+  site:new <game> [--force] a first web site for the game in games/<game>/site/ (from project.yaml + screenshots of its demo)
+  build:site <game>         the game's web site (site/) + the game in play/ -> dist/site (what deploy sends)
+  siteshot <game>           headless Chrome on dist/site: desktop + phone screenshots, broken images, JS errors
+  serve <game> [port]       serve the browser build on http://localhost:<port> (default 8080)
+  webshot <game> [seconds] [keys]  headless Chrome: load the browser build, play keys, screenshot, fail on errors
+                            keys: JSON [[second, "ArrowDown"], [2, "Enter"]] -> dist/webshot.png
+                            (serve / webshot: JUMPHP_WEB=remote uses dist/remote, JUMPHP_WEB=site dist/site)
+  export:desktop <game>     a Docker image that runs the game (jumphp/game-<game>)
+  android <game> [--local] [--package ID] [--version-name X]
+                            the game as a native Android app (no browser: PHP, SDL, OpenGL ES, OpenAL inside), signed:
+                            built by GitHub Actions in your repository and published as a release (.apk + .aab for
+                            Google Play); --local: built here in Docker. docs/android-native.md
+  apple <game> [--macos] [--ios] [--bundle-id ID] [--version X] [--local]
+                            the game as native Apple apps (no browser: PHP, SDL, OpenGL, OpenAL inside): built by
+                            GitHub Actions on a Mac in your repository, published as a release: .dmg / .zip (a Mac,
+                            Apple silicon + Intel), .ipa (iPhone / iPad), the simulator's app, screenshots of both
+                            running there. ios <game> / macos <game>: one of them. --local: on this Mac. docs/apple.md
+  export:standalone <game> [--linux] [--windows]
+                            the game as one executable, nothing to install (PHP, SDL, OpenGL, OpenAL inside):
+                            dist/standalone/<game>-linux-x86_64 and/or <game>-windows-x86_64.exe (docs/standalone.md)
+  installer <game> --github | --url https://site/folder/ | --standalone [--windows] [--linux] [--macos] [--version X] [--no-build]
+                            an installer per system (jumphp2installer: shortcuts, uninstaller, always the newest version):
+                            --github: a release v<version> of the project's repository (gh); --url: a folder to put at
+                            that address, dist/installer/; --standalone: the game inside each installer (no site, no
+                            network, no update). Builds Windows / Linux first (apps too); macOS: an existing
+                            build (bin/jumphp macos <game>, app:export --macos). On jumphp.net: the IDE's jumphp.net window
+  twa <game> [--url URL] [--package ID] [--name NAME] [--same-version]
+                            the game as an Android app for Google Play (Trusted Web Activity, Bubblewrap):
+                            dist/android/<game>-<v>.aab (Play) + .apk (a phone) + assetlinks.json (docs/android.md).
+                            URL: the game's page online (https), e.g. https://jumphp.net/<slug>
+  deploy [game...]          to your server (JUMPHP_SERVER in .env, see deploy:setup): browser builds + FrankenPHP
+                            (alone or behind Traefik), docker compose up there. Default game: JUMPHP_GAME.
+                            Without JUMPHP_SERVER: rsync dist/web to $JUMPHP_DEPLOY_TARGET/<game>/
+  deploy:setup              ask the server, domain, web server (FrankenPHP / Traefik + FrankenPHP / existing Traefik)
+  server:setup              install Docker on the server (ssh)
+  server:logs               the server's web logs
+  server:traefik [user@host]  looks for a Traefik on the server: network, entry points, certificate resolver in use
+  github                    put the project on GitHub (gh), optionally GitHub Pages
+  pages [game...]           build the games (default: all) + a home page, publish them on the gh-pages
+                            branch of the git remote (GitHub Pages; the branch is replaced each time)
+
+CLI apps (in the terminal: commands + full-screen text screens, symfony/tui; docs/cli.md)
+  cli:new <app> [title]     create apps/<app> from skeleton-cli/ (config/project.yaml: kind: cli)
+  plugin:new <id> [title]   a plugin of the JumPHP IDE, in PHP: apps/<id> from skeleton-plugin/ (docs/ide-plugins.md)
+  plugin:pack <id>          the plugin as apps/<id>/dist/<id>-<version>.zip (to install in the IDE, to publish on jumphp.net)
+  extension:new <id> [title] an engine extension (Composer type jumphp-extension): extensions/<id> + its example
+                            game games/<id>-demo (docs/extensions.md)
+  extension:remove <game> <pkg>  take it out again, with its samples and documentation
+  extension:add <game> <pkg>  add an engine extension to a game (Packagist, or one of extensions/ here), then
+                            show what it adds
+  video:replay <game> [--input J|file] [--scene C] [--seconds S]   a film (MP4, with its sound) of any game, from scripted or recorded input
+  video:make <game> [--seed N] [--count N] [--seconds S] [--template T]
+                            vertical videos (TikTok, Shorts: 1080x1920, 60 FPS, H.264 + AAC) of project.yaml video: scene,
+                            each bounce a note (jumphp/shorts): dist/video/*.mp4 + a cover (docs/video-maker.md)
+  service:install <id> [--system] [--exe <file>]
+                            the exported executable (export:standalone) as a service of this computer, from
+                            project.yaml `service:` (systemd / launchd / WinSW; docs/services.md); also
+                            service:uninstall, service:status, service:logs [-f], service:start, service:stop, service:print
+  debug                     the IDE's debugger for Claude Code in a terminal (MCP on stdin / stdout):
+                            claude mcp add jumphp-debug -- bin/jumphp debug; then JUMPHP_XDEBUG=9003 bin/jumphp test <game>
+                            then run <app> [command...] / test <app> / shot <app> (the screen as text: JUMPHP_KEYS)
+                            / export:standalone <app> [--linux] [--windows] [--macos] (one executable, console kept)
+
+Desktop apps (Tauri: native windows with HTML / CSS / JS pages, driven by PHP; native only, docs/tauri.md)
+  app:new <app> [title]     create apps/<app> from skeleton-app/ (config/project.yaml: ui: webview)
+  app:run <app>             open the app on your screen
+  app:test <app>            php -l + phpstan + phpunit (AppTestCase, no window) + the app on a virtual screen
+  app:shot <app> [frames] [out.png]  the app's window after N frames (default 120) -> var/screenshots/app.png
+  app:export <app> [--linux] [--windows] [--macos]  the app as one executable: dist/standalone/<app>-linux-x86_64
+                                (--windows: .exe; --macos: <app>-macos.zip, an .app for Apple silicon + Intel)
+  ide [--build] [--install]                 the JumPHP IDE on this computer (natively, no Docker: this checkout's IDE sources in
+                                            its executable, built once); --build: build it again; --install: menu launcher
+  claude:connect                            the web IDE (jumphp.net/ide) uses this computer's Claude Code: the JumPHP IDE with
+                                            "Claude for jumphp.net" on (authorized once in the browser)
+  app:release <app> --url <base> [--notes "..."] [--linux] [--windows] [--macos]
+                                exported + a signed update.json for the apps' updates (docs/tauri.md "Updates")
+                            (needs WebKitGTK 4.1) / <app>-windows-x86_64.exe (WebView2)
+  tauri:setup               build the Tauri image (desktop runtime + FFI + Rust + WebKitGTK)
+  tauri:build               build the Tauri runtime library tauri/ -> build/tauri/linux-x86_64/libjumphp_tauri.so
+  tauri:download [platform...|--all]  the runtime library of these sources from JumPHP's releases on git.jumphp.net (workflow
+                            tauri): linux-x86_64 (default), windows-x86_64, macos-universal
+
+Engine
+  test engine               engine unit tests + phpstan
+  lint                      php -l + forbidden words check of the whole repository
+  php <dir> <args>          php in the desktop image, from <dir> (repo-relative)
+
+Network
+  relay up|down|logs        the multiplayer relay server (ws://localhost:8090/ws)
+
+Environment (headless runs): JUMPHP_SCENE, JUMPHP_SCENE_PARAMS, JUMPHP_INPUT, JUMPHP_MAX_FRAMES, JUMPHP_SHOT_EVERY
+EOF
+}
+
+# the folder of a project, relative to the root: games/<id>, else apps/<id> (empty when neither exists)
+project_path() {
+  local id="${1:-}" p
+  [ -n "$id" ] || return 0
+  for p in games apps; do [ -d "$ROOT/$p/$id" ] && { echo "$p/$id"; return; }; done
+  return 0
+}
+
+# a project folder's settings: config/project.yaml, else the older config/game.yaml (both read)
+project_yaml() { if [ -f "$1/config/project.yaml" ]; then echo "$1/config/project.yaml"; else echo "$1/config/game.yaml"; fi; }
+
+# the ids of every project (games/ then apps/) that has a composer.json
+all_projects() {
+  local g
+  for g in "$ROOT"/games/*/ "$ROOT"/apps/*/; do [ -f "$g/composer.json" ] && basename "$g"; done
+  return 0
+}
+
+# the project a command means when none is named: the folder of games/ or apps/ it is typed in, else JUMPHP_APP /
+# JUMPHP_GAME (.env), else the only project (none of these: empty)
+default_project() {
+  local p rest
+  for p in games apps; do
+    case "$CALLER_DIR/" in "$ROOT/$p/"*/*) rest="${CALLER_DIR#"$ROOT/$p/"}"; echo "${rest%%/*}"; return ;; esac
+  done
+  if [ -n "$JUMPHP_GAME" ] && [ -n "$(project_path "$JUMPHP_GAME")" ]; then echo "$JUMPHP_GAME"; return; fi
+  local all=()
+  mapfile -t all < <(all_projects)
+  [ ${#all[@]} -eq 1 ] && echo "${all[0]}"
+  return 0
+}
+
+project_dir() {
+  local g="${1:-}" d
+  [ -n "$g" ] || die "missing <project> (a folder of games/ or apps/)"
+  d="$(project_path "$g")"
+  [ -n "$d" ] || die "no games/$g nor apps/$g (bin/jumphp new $g, or cli:new / gui:new / app:new / plugin:new)"
+  echo "$d"
+}
+
+# the old names (a script of yours that calls them keeps working)
+game_dir() { project_dir "$@"; }
+default_game() { default_project "$@"; }
+game_runtime() { project_runtime "$@"; }
+
+# runtime of a project folder: JUMPHP_RUNTIME, else `runtime:` in its config/game.yaml, else "default"
+project_runtime() {
+  if [ -n "${JUMPHP_RUNTIME:-}" ]; then echo "$JUMPHP_RUNTIME"; return; fi
+  local yaml; yaml="$(project_yaml "$ROOT/$1")"
+  if [ -f "$yaml" ] && grep -qE '^[[:space:]]*runtime:[[:space:]]*["'"'"']?async' "$yaml"; then echo async; else echo default; fi
+}
+
+runtime_image() { [ "$(project_runtime "$1")" = async ] && echo "$ASYNC_IMAGE" || echo "$DESKTOP_IMAGE"; }
+
+ensure_desktop_image() {
+  [ "$(docker image inspect -f '{{index .Config.Labels "jumphp.rev"}}' "$DESKTOP_IMAGE" 2>/dev/null)" = "$DESKTOP_REV" ] || { need_buildx; say "building $DESKTOP_IMAGE (the first time, or a newer runtime: ~3 min)"; docker build -t "$DESKTOP_IMAGE" --build-context ext=docker/ext docker/desktop; }
+}
+
+# JUMPHP_LIVE=1: the headless runs write their current frame to var/live/frame.png (the Claude Code pane
+# jumphp-live shows it as it changes); said once per run, with its path on this machine
+live_announce() {
+  [ -n "${JUMPHP_LIVE:-}" ] || return 0
+  mkdir -p "$ROOT/var/live" && rm -f "$ROOT/var/live/frame.png"
+  say "live frames: $ROOT/var/live/frame.png"
+}
+
+# JUMPHP_XDEBUG=<port>: step debugging (the IDE's debugger listens there, on this computer). xdebug_image <base>
+# <xdebug image> <dockerfile folder> <what>: the base image with Xdebug, built the first time and again when the base
+# changed (its id is kept as a label); sets XDEBUG_IMAGE_USED and XDEBUG_FLAGS (where Xdebug connects back to). The
+# base images stay without it (Xdebug slows PHP down).
+xdebug_image() {
+  local base_image="$1" image="$2" dir="$3" what="$4" base
+  # JUMPHP_DEBUGGER=php-debugger: PHP Debugger (https://php-debugger.dev, DBGp like Xdebug, which stays the default) in
+  # place of Xdebug; it reads the same XDEBUG_* variables. PHP 8.2-8.5 only: the async runtime (8.6) keeps Xdebug.
+  if [ "${JUMPHP_DEBUGGER:-xdebug}" = php-debugger ]; then
+    case "$dir" in
+      *async*) say "PHP Debugger does not run on PHP 8.6 (async runtime): Xdebug is used" ;;
+      *) image="${image/xdebug/phpdebugger}"; dir=docker/desktop-phpdebugger; what="$what with PHP Debugger instead of" ;;
+    esac
+  fi
+  base="$(docker image inspect -f '{{.Id}}' "$base_image")"
+  if [ "$(docker image inspect -f '{{index .Config.Labels "jumphp.base"}}' "$image" 2>/dev/null)" != "$base" ]; then
+    say "building $image ($what Xdebug, the first time)"
+    docker build -q -t "$image" --label "jumphp.base=$base" --build-arg "BASE=$base_image" "$dir" >/dev/null || die "debugger image not built ($image)"
+  fi
+  XDEBUG_IMAGE_USED="$image"
+  local port="${JUMPHP_XDEBUG##*:}"
+  case "$(uname -s)" in
+    Linux) XDEBUG_FLAGS=(-e "XDEBUG_CONFIG=client_host=127.0.0.1 client_port=$port") ;;
+    *) XDEBUG_FLAGS=(-e "XDEBUG_CONFIG=client_host=host.docker.internal client_port=$port") ;;
+  esac
+  XDEBUG_FLAGS+=(-e XDEBUG_MODE=debug -e XDEBUG_SESSION=jumphp)
+}
+
+# php_run <workdir repo-relative> [docker flags...] -- <command...>
+php_run() {
+  local wd="$1"; shift
+  local flags=()
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do flags+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  local image; image="$(runtime_image "$wd")"
+  # JUMPHP_XDEBUG=<port>: the image with Xdebug (xdebug_image), which connects back at the start of every PHP run
+  # (composer, phpstan and php -l left alone: slower with Xdebug, nothing to stop at)
+  local debug="${JUMPHP_XDEBUG:-}"
+  case " $* " in *" composer "*|*phpstan*|*"php -l"*) debug= ;; esac
+  if [ "$image" = "$ASYNC_IMAGE" ]; then
+    docker image inspect "$ASYNC_IMAGE" >/dev/null 2>&1 || { need_buildx; say "building $ASYNC_IMAGE (PHP 8.6 ZTS + TrueAsync, first time ~15 min)"; docker build -t "$ASYNC_IMAGE" --build-context ext=docker/ext docker/desktop-async; }
+  else
+    ensure_desktop_image
+  fi
+  if [ -n "$debug" ]; then
+    if [ "$image" = "$ASYNC_IMAGE" ]; then xdebug_image "$ASYNC_IMAGE" "$XDEBUG_ASYNC_IMAGE" docker/desktop-async-xdebug "the async runtime"
+    else xdebug_image "$DESKTOP_IMAGE" "$XDEBUG_IMAGE" docker/desktop-xdebug "the desktop runtime"; fi
+    image="$XDEBUG_IMAGE_USED"
+    flags+=(${XDEBUG_FLAGS[@]+"${XDEBUG_FLAGS[@]}"})
+    [[ " ${flags[*]-} " == *" --network host "* ]] || [ "$(uname -s)" != Linux ] || flags+=(--network host)
+  fi
+  # a terminal for the program when this one is a terminal (a CLI app's full-screen screens need it: raw keys, its
+  # size), checked now: TTY_FLAGS is always -i (its -t 1 runs inside $(...), a pipe), and a php_run inside $(...) must
+  # not get -t (its output would come with \r)
+  local tty=-i
+  if [ -t 0 ] && [ -t 1 ]; then tty=-it; fi
+  # --init: a real PID 1 that passes the signals on (PHP as PID 1 ignores SIGTERM: the IDE's Stop, a killed bin/jumphp
+  # left the container running)
+  docker run --rm --init "$tty" --user "$(id -u):$(id -g)" \
+    "${WS[@]}" -w "/workspace/$wd" \
+    -e HOME=/tmp -e COMPOSER_HOME=/tmp/composer -e COMPOSER_CACHE_DIR=/workspace/.cache/composer \
+    ${JUMPHP_LIVE:+-e JUMPHP_LIVE=/workspace/var/live/frame.png -e JUMPHP_LIVE_EVERY=${JUMPHP_LIVE_EVERY:-10}} \
+    ${JUMPHP_REALTIME:+-e JUMPHP_REALTIME=1} \
+    ${flags[@]+"${flags[@]}"} "$image" "$@"
+}
+
+# the IDE's debugger as an MCP server on stdin / stdout, for Claude Code in a terminal (tools/debug-mcp.php):
+#   claude mcp add jumphp-debug -- bin/jumphp debug
+# it waits for Xdebug on JUMPHP_DEBUG_PORT (9003): Claude runs JUMPHP_XDEBUG=9003 bin/jumphp test <game>, then debug_wait
+# JUMPHP_DEBUGGER=php-debugger: PHP Debugger's own MCP server instead (https://php-debugger.dev/agentic-debugging/dbgp-client:
+# `dbgp` installed on this computer; claude mcp add dbgp -- dbgp mcp), then JUMPHP_DEBUGGER=php-debugger JUMPHP_XDEBUG=9003 bin/jumphp test <game>
+cmd_debug() {
+  local port="${JUMPHP_DEBUG_PORT:-9003}" net=()
+  if [ "${JUMPHP_DEBUGGER:-xdebug}" = php-debugger ]; then
+    command -v dbgp >/dev/null || die "dbgp is not installed: curl -fsSL https://github.com/php-debugger/dbgp-client/releases/latest/download/install.sh | sh"
+    if [ "$port" = 9003 ]; then exec dbgp mcp; else exec dbgp -php-port "$port" mcp; fi
+  fi
+  ensure_desktop_image >&2      # stdout is the MCP channel: nothing else may be written there
+  case "$(uname -s)" in
+    Linux) net=(--network host) ;;
+    *) net=(-p "$port:$port" -e JUMPHP_DEBUG_HOST=0.0.0.0) ;;     # Xdebug comes from host.docker.internal
+  esac
+  JUMPHP_XDEBUG= php_run . "${net[@]}" -e "JUMPHP_DEBUG_PORT=$port" -- php /workspace/tools/debug-mcp.php
+}
+
+# headless OpenGL: JUMPHP_GL=1|0, else on when the game's code uses the engine's gl() / opengl().
+# The run gets a real window on Xvfb (Mesa llvmpipe) instead of the SDL dummy driver.
+gl_flags() {
+  local on="${JUMPHP_GL:-}"
+  [ -n "$on" ] || { grep -rqE -- '->(gl|opengl)\(\)' "$ROOT/$1/src" 2>/dev/null && on=1 || on=0; }
+  [ "$on" = 1 ] && echo "-e JUMPHP_HEADLESS_GL=1 -e SDL_VIDEODRIVER=x11"
+}
+gl_wrap() { [ -n "$(gl_flags "$1")" ] && echo "jumphp-xvfb"; }   # docker/ext/jumphp-xvfb
+
+ensure_vendor() {
+  local dir="$1"
+  if [ ! -f "$ROOT/$dir/vendor/autoload.php" ]; then
+    say "composer install ($dir)"
+    php_run "$dir" -- composer install --no-interaction --no-progress
+  fi
+  ensure_videos "$dir"
+}
+
+# PHPUnit (and PHPStan) of a game's tests come from engine/vendor: a copied project (the IDE's new projects,
+# composer create-project) has none until something installs it, and the tests would be skipped or fail
+ensure_engine_tools() {
+  [ -x "$ROOT/engine/vendor/bin/phpunit" ] && return
+  say "composer install (engine: PHPUnit for the game tests)"
+  php_run engine -- composer install --no-interaction --no-progress
+}
+
+cmd_setup() {
+  say "desktop runtime image ($DESKTOP_IMAGE)"
+  need_buildx
+  docker build -t "$DESKTOP_IMAGE" --build-context ext=docker/ext docker/desktop
+  say "relay server image"
+  docker compose build relay
+  if [ "${1:-}" = async ]; then
+    say "async runtime image ($ASYNC_IMAGE: PHP 8.6 ZTS + TrueAsync, ~15 min)"
+    need_buildx
+    docker build -t "$ASYNC_IMAGE" --build-context ext=docker/ext docker/desktop-async
+  fi
+  say "done. Next: bin/jumphp engine:build (browser engine), bin/jumphp run pong"
+}
+
+cmd_engine_build() {
+  docker buildx inspect "$BUILDER" >/dev/null 2>&1 || docker buildx create --name "$BUILDER" --driver docker-container >/dev/null
+  say "building the WebAssembly engine (first build ~25 min, then cached in .cache/buildx-engine)"
+  docker buildx bake --builder "$BUILDER" -f docker/engine-wasm/docker-bake.hcl --progress=plain "$@"
+  ls -la "$ENGINE_DIR"
+}
+
+# The prebuilt engine of a version (asset of the release vX.Y.Z of JumPHP's forge, git.jumphp.net), checked with its sha256.
+cmd_engine_download() {
+  local version="${1:-$(cat "$ROOT/VERSION" 2>/dev/null || echo latest)}"
+  local base="${REPO_URL%.git}/releases" url
+  if [ "$version" = latest ]; then
+    # Forgejo has no /releases/latest/download: ask the API for the latest tag (GitHub keeps the short form)
+    case "$base" in
+      https://github.com/*) url="$base/latest/download" ;;
+      *) local host="${base%%/*/*}" path="${base#*://*/}"; path="${path%/releases}"
+         [[ "$base" =~ ^(https?://[^/]+)/(.+)/releases$ ]] && { host="${BASH_REMATCH[1]}"; path="${BASH_REMATCH[2]}"; }
+         local tag; tag="$(curl -fsSL "$host/api/v1/repos/$path/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p' | head -1)"
+         [ -n "$tag" ] || die "cannot find the latest release of $base"
+         url="$base/download/$tag" ;;
+    esac
+  else url="$base/download/v${version#v}"; fi
+  command -v curl >/dev/null || die "curl is needed"
+  local tmp; tmp="$(mktemp -d)"
+  say "downloading the engine $version ($url/jumphp-engine.tar.gz)"
+  curl -fL --progress-bar -o "$tmp/jumphp-engine.tar.gz" "$url/jumphp-engine.tar.gz" \
+    && curl -fsSL -o "$tmp/jumphp-engine.tar.gz.sha256" "$url/jumphp-engine.tar.gz.sha256" \
+    || { rm -rf "$tmp"; die "no prebuilt engine for $version: bin/jumphp engine:build (~25 min)"; }
+  local want got
+  want="$(cut -d' ' -f1 < "$tmp/jumphp-engine.tar.gz.sha256")"
+  got="$( (sha256sum "$tmp/jumphp-engine.tar.gz" 2>/dev/null || shasum -a 256 "$tmp/jumphp-engine.tar.gz") | cut -d' ' -f1)"
+  [ -n "$want" ] && [ "$want" = "$got" ] || { rm -rf "$tmp"; die "checksum mismatch: the download is broken, try again"; }
+  mkdir -p "$ENGINE_DIR"
+  tar -xzf "$tmp/jumphp-engine.tar.gz" -C "$ENGINE_DIR"
+  rm -rf "$tmp"
+  ls -la "$ENGINE_DIR"
+}
+
+cmd_engine_pack() {
+  [ -f "$ENGINE_DIR/php-web.wasm" ] || die "no engine: bin/jumphp engine:build first"
+  mkdir -p "$ROOT/.build"
+  tar -czf "$ROOT/.build/jumphp-engine.tar.gz" -C "$ENGINE_DIR" .
+  (cd "$ROOT/.build" && { sha256sum jumphp-engine.tar.gz 2>/dev/null || shasum -a 256 jumphp-engine.tar.gz; } > jumphp-engine.tar.gz.sha256)
+  ls -la "$ROOT/.build/jumphp-engine.tar.gz"*
+}
+
+# The shared engine of remote games (docs/remote.md): build/runtime, and its release asset.
+# OpenSSH's ssh client compiled to WebAssembly (emscripten, in Docker): the SSH of applications in the browser ($engine->ssh()).
+cmd_ssh_build() {
+  command -v docker >/dev/null || die "docker is needed"
+  say "building OpenSSH for WebAssembly (OpenSSL + OpenSSH, a few minutes the first time)"
+  docker build --target out --output "type=local,dest=$ROOT/build/ssh" "$ROOT/docker/ssh-wasm" || die "the SSH client did not build"
+  say "done: build/ssh/ssh.js + ssh.wasm"
+}
+
+cmd_runtime_build() {
+  [ -f "$ROOT/build/ssh/ssh.wasm" ] || cmd_ssh_build
+  [ -f "$ENGINE_DIR/php-web.mjs" ] && [ -f "$ENGINE_DIR/php-web.wasm" ] || die "no engine in build/engine: bin/jumphp engine:download (or engine:build) first"
+  php_run . -- sh /workspace/tools/build-runtime.sh
+  mkdir -p "$ROOT/.build"
+  tar -czf "$ROOT/.build/jumphp-runtime.tar.gz" -C "$ROOT/build/runtime" .
+  (cd "$ROOT/.build" && { sha256sum jumphp-runtime.tar.gz 2>/dev/null || shasum -a 256 jumphp-runtime.tar.gz; } > jumphp-runtime.tar.gz.sha256)
+  say "done: build/runtime (+ .build/jumphp-runtime.tar.gz)"
+}
+
+cmd_runtime_download() {
+  local version="${1:-$(cat "$ROOT/VERSION" 2>/dev/null || echo latest)}"
+  local base="${REPO_URL%.git}/releases" url
+  if [ "$version" = latest ]; then url="$base/latest/download"; else url="$base/download/v${version#v}"; fi
+  local tmp; tmp="$(mktemp -d)"
+  say "downloading the runtime $version ($url/jumphp-runtime.tar.gz)"
+  curl -fL --progress-bar -o "$tmp/r.tar.gz" "$url/jumphp-runtime.tar.gz" \
+    && curl -fsSL -o "$tmp/r.sha256" "$url/jumphp-runtime.tar.gz.sha256" \
+    || { rm -rf "$tmp"; die "no runtime for $version: bin/jumphp runtime:build"; }
+  local want got
+  want="$(cut -d' ' -f1 < "$tmp/r.sha256")"
+  got="$( (sha256sum "$tmp/r.tar.gz" 2>/dev/null || shasum -a 256 "$tmp/r.tar.gz") | cut -d' ' -f1)"
+  [ -n "$want" ] && [ "$want" = "$got" ] || { rm -rf "$tmp"; die "checksum mismatch: the download is broken, try again"; }
+  rm -rf "$ROOT/build/runtime" && mkdir -p "$ROOT/build/runtime"
+  tar -xzf "$tmp/r.tar.gz" -C "$ROOT/build/runtime"
+  rm -rf "$tmp"
+  ls -la "$ROOT/build/runtime"
+}
+
+# The newest JumPHP merged into the project (a project made by composer create-project or bin/jumphp init
+# has the framework as git remote "jumphp"; a plain clone of JumPHP has it as origin).
+cmd_update() {
+  command -v git >/dev/null || die "git is needed"
+  local remote=jumphp
+  git -C "$ROOT" remote get-url jumphp >/dev/null 2>&1 || {
+    if git -C "$ROOT" remote get-url origin 2>/dev/null | grep -qE '(davidnurdin|jumphp)/jumPhp'; then remote=origin
+    else git -C "$ROOT" remote add jumphp "$REPO_URL" && git -C "$ROOT" remote set-url --push jumphp no-push://the-jumphp-framework-only-gives-updates; fi
+  }
+  # JumPHP moved from GitHub (davidnurdin/jumPhp) to git.jumphp.net: an older project still points at the old address
+  local old; old="$(git -C "$ROOT" remote get-url "$remote" 2>/dev/null || true)"
+  case "$old" in
+    *github.com*davidnurdin/jumPhp*) say "JumPHP now lives on git.jumphp.net: the remote '$remote' is updated"; git -C "$ROOT" remote set-url "$remote" "$REPO_URL" ;;
+  esac
+  git -C "$ROOT" fetch -q "$remote" main || die "cannot fetch JumPHP ($remote)"
+  if ! git -C "$ROOT" rev-parse -q --verify HEAD >/dev/null || ! git -C "$ROOT" merge-base HEAD FETCH_HEAD >/dev/null 2>&1; then
+    # a project with its own history (made by the IDE or composer create-project): JumPHP's files are brought to the
+    # newest (bin, engine, tools, docker...), the project's own (games/, apps/, README.md, .env) never touched
+    local latest; latest="$(git -C "$ROOT" rev-parse FETCH_HEAD)"
+    local entries=(); local e
+    while IFS= read -r e; do
+      case "$e" in games|apps|README.md|.jumphp|.env|.git) ;; *) entries+=("$e") ;; esac
+    done < <(git -C "$ROOT" ls-tree --name-only FETCH_HEAD)
+    say "bringing JumPHP's files to ${latest:0:12} (${entries[*]}); games/ and apps/ untouched"
+    git -C "$ROOT" restore --source=FETCH_HEAD --worktree -- "${entries[@]}" || die "JumPHP's files not updated"
+    mkdir -p "$ROOT/.jumphp"
+    printf '{\n    "repository": "%s",\n    "commit": "%s",\n    "updated": "%s"\n}\n' "$REPO_URL" "$latest" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ROOT/.jumphp/jumphp.json"
+    # what this project tidied away (bin/jumphp tidy, a new project) does not come back
+    [ -f "$ROOT/.jumphp/excluded" ] && [ -f "$ROOT/tools/project-clean.sh" ] && bash "$ROOT/tools/project-clean.sh" --reapply >/dev/null
+    say "updated (git status shows what changed). The engine changed? bin/jumphp engine:download (or engine:build); then bin/jumphp setup"
+    return
+  fi
+  [ -z "$(git -C "$ROOT" status --porcelain)" ] || die "commit your changes first (git status)"
+  say "merging $remote/main"
+  if ! git -C "$ROOT" pull --no-rebase --no-edit "$remote" main; then
+    # the only conflicts a project can have are files it tidied away (JumPHP changed what the project deleted): they stay away
+    local excluded="$ROOT/.jumphp/excluded" f p ok=1
+    [ -f "$excluded" ] || die "the merge has conflicts: resolve them (git status), then git commit"
+    while IFS= read -r f; do
+      local hit=0
+      while IFS= read -r p; do [ -n "$p" ] && { [ "$f" = "$p" ] || [[ "$f" == "$p"/* ]]; } && { hit=1; break; }; done < "$excluded"
+      [ "$hit" = 1 ] || { ok=0; break; }
+    done < <(git -C "$ROOT" diff --name-only --diff-filter=U)
+    [ "$ok" = 1 ] || die "the merge has conflicts: resolve them (git status), then git commit"
+    while IFS= read -r p; do [ -n "$p" ] && git -C "$ROOT" rm -r -q --ignore-unmatch -- "$p" >/dev/null 2>&1; done < "$excluded"
+    git -C "$ROOT" commit -q --no-edit || die "the merge could not be finished: git status"
+  fi
+  [ -f "$ROOT/.jumphp/excluded" ] && [ -f "$ROOT/tools/project-clean.sh" ] && bash "$ROOT/tools/project-clean.sh" --reapply >/dev/null
+  say "updated. The engine changed? bin/jumphp engine:download (or engine:build); then bin/jumphp setup"
+}
+
+# bin/jumphp tidy [--examples] [--yes]: a project without JumPHP's own development files (tools/project-clean.list), and without
+# JumPHP's example projects with --examples. What it removes is kept in .jumphp/excluded: `bin/jumphp update` does not bring it back.
+cmd_tidy() {
+  local flags=() yes=0 a
+  for a in "$@"; do
+    case "$a" in
+      --yes|-y) yes=1 ;;
+      --examples) flags+=(--examples) ;;
+      *) die "usage: bin/jumphp tidy [--examples] [--yes]" ;;
+    esac
+  done
+  [ -f "$ROOT/tools/project-clean.sh" ] || die "no tools/project-clean.sh: bin/jumphp update first"
+  say "not a project's business (tools/project-clean.list):"
+  local out; out="$(bash "$ROOT/tools/project-clean.sh" --dry-run ${flags[@]+"${flags[@]}"})"
+  echo "$out"
+  [ "$out" = "nothing to tidy" ] && return 0
+  if [ "$yes" != 1 ]; then
+    local answer; read -r -p "Remove these (your own games/ and apps/ stay)? [y/N] " answer
+    [[ "$answer" =~ ^[yY] ]] || { say "left as they are"; return 0; }
+  fi
+  bash "$ROOT/tools/project-clean.sh" ${flags[@]+"${flags[@]}"}
+}
+
+cmd_new() {
+  local name="${1:-}" title="${2:-}"
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || die "game name: lower case letters, digits and dashes (e.g. space-race)"
+  [ -z "$(project_path "$name")" ] || die "$(project_path "$name") already exists"
+  [ -n "$title" ] || title="$(echo "$name" | tr '-' ' ' | tr '[:lower:]' '[:upper:]')"
+  mkdir -p games
+  cp -r skeleton "games/$name"
+  php_run "games/$name" -- php /workspace/tools/new-game.php "$name" "$title"
+  say "games/$name created. Next: bin/jumphp install $name && bin/jumphp run $name"
+}
+
+cmd_gui_new() {
+  local name="${1:-}" title="" mobile=0
+  shift || true
+  for a in "$@"; do
+    case "$a" in
+      --mobile) mobile=1 ;;
+      *) [ -z "$title" ] && title="$a" ;;
+    esac
+  done
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || die "app name: lower case letters, digits and dashes (e.g. contacts)"
+  [ -z "$(project_path "$name")" ] || die "$(project_path "$name") already exists"
+  [ -n "$title" ] || title="$(echo "$name" | tr '-' ' ' | awk '{for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2)} 1')"
+  mkdir -p apps
+  cp -r skeleton-gui "apps/$name"
+  php_run "apps/$name" -- php /workspace/tools/new-gui.php "$name" "$title" "$mobile"
+  say "apps/$name created. Next: bin/jumphp install $name && bin/jumphp run $name (forms/*.form.yaml: the IDE's visual editor)"
+}
+
+# a film -> numbered pictures + its sound, for JumPHP\Gui\Video (SDL's binding decodes no video)
+cmd_video() {
+  local game="${1:-}" file="${2:-}"; local dir; dir="$(project_dir "$game")"
+  [ -f "$file" ] || die "usage: bin/jumphp video <app> <film.mp4> [name] [fps]"
+  local name="${3:-$(basename "${file%.*}" | tr '[:upper:] ' '[:lower:]-')}" fps="${4:-25}"
+  video_frames "$file" "$dir/assets/videos/$name" "$fps"
+  say "done: {type: video, src: assets/videos/$name, fps: $fps}"
+}
+
+# the films put in assets/videos/ (intro.mp4...): their pictures and sound in assets/videos/<name>/, made again when the
+# film is newer (src: assets/videos/intro.mp4 plays them). Before run, test, shot, the builds and the exports.
+ensure_videos() {
+  local dir="$1" film name out
+  [ -d "$ROOT/$dir/assets/videos" ] || return 0
+  for film in "$ROOT/$dir"/assets/videos/*.{mp4,webm,mov,mkv,avi,m4v,MP4,MOV}; do
+    [ -f "$film" ] || continue
+    name="$(basename "${film%.*}")"; out="$dir/assets/videos/$name"
+    if [ -f "$ROOT/$out/00001.jpg" ] && [ ! "$film" -nt "$ROOT/$out/00001.jpg" ]; then continue; fi
+    rm -f "$ROOT/$out"/[0-9]*.jpg "$ROOT/$out/audio.ogg"
+    video_frames "$film" "$out" "$(video_fps "$dir" "$name")"
+  done
+}
+
+# the fps of a film: `fps` of the video widget that plays it (forms/*.form.yaml), else 25
+video_fps() {
+  local fps
+  fps="$(grep -hoE "src: *['\"]?assets/videos/$2\.[A-Za-z0-9]+['\"]?, *fps: *[0-9.]+|fps: *[0-9.]+, *src: *['\"]?assets/videos/$2\.[A-Za-z0-9]+" "$ROOT/$1"/forms/*.form.yaml 2>/dev/null \
+    | grep -oE 'fps: *[0-9.]+' | head -1 | grep -oE '[0-9.]+$')" || true
+  echo "${fps:-25}"
+}
+
+# video_frames <film> <repo-relative folder> <fps>: numbered JPEG pictures (at most 1280 wide) + audio.ogg
+video_frames() {
+  local file="$1" out="$2" fps="$3" abs
+  abs="$(cd "$(dirname "$file")" && pwd)/$(basename "$file")"
+  mkdir -p "$ROOT/$out"
+  docker image inspect jumphp/ffmpeg:dev >/dev/null 2>&1 || docker build -q -t jumphp/ffmpeg:dev "$ROOT/docker/ffmpeg" >/dev/null
+  say "frames of $(basename "$file") at $fps fps -> $out"
+  docker run --rm -u "$(id -u):$(id -g)" -v "$abs:/in/$(basename "$file"):ro" -v "$ROOT/$out:/out" jumphp/ffmpeg:dev \
+    -loglevel error -y -i "/in/$(basename "$file")" -vf "fps=$fps,scale='min(1280,iw)':-2" -q:v 4 /out/%05d.jpg
+  docker run --rm -u "$(id -u):$(id -g)" -v "$abs:/in/$(basename "$file"):ro" -v "$ROOT/$out:/out" jumphp/ffmpeg:dev \
+    -loglevel error -y -i "/in/$(basename "$file")" -vn -c:a libvorbis -q:a 4 /out/audio.ogg 2>/dev/null || rm -f "$ROOT/$out/audio.ogg"
+}
+
+# the game as an Android app (tools/twa.sh in docker/twa); asks what it does not know, remembers it in
+# games/<game>/android/twa-manifest.json (in git); the key and the Android SDK stay in ~/.jumphp (never in git)
+cmd_twa() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift
+  local url="" package="" name="" bump=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --url) url="${2:-}"; shift ;;
+      --url=*) url="${1#*=}" ;;
+      --package) package="${2:-}"; shift ;;
+      --package=*) package="${1#*=}" ;;
+      --name) name="${2:-}"; shift ;;
+      --name=*) name="${1#*=}" ;;
+      --same-version) bump=0 ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  local twa="$ROOT/$dir/android/twa-manifest.json"
+  if [ -f "$twa" ]; then
+    [ -n "$package" ] || package="$(sed -nE 's/^ *"packageId": *"([^"]+)".*/\1/p' "$twa")"
+    [ -n "$url" ] || url="$(sed -nE 's/^ *"webManifestUrl": *"([^"]+)".*/\1/p' "$twa")"
+  fi
+  if [ -z "$url" ]; then
+    [ -t 0 ] || die "--url: the game's page online (https), e.g. https://jumphp.net/$game"
+    read -rp "The game's page online (https; on the playground: https://jumphp.net/<slug>): " url
+  fi
+  [[ "$url" =~ ^https?:// ]] || die "--url: an address (https://...)"
+  if [ -z "$package" ]; then
+    local owner suggestion
+    owner="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/:]+)/[^/]+$#\1#p' | tr '[:upper:]-' '[:lower:]_')"
+    suggestion="io.github.${owner:-me}.$(echo "$game" | tr '-' '_')"
+    if [ -t 0 ]; then
+      read -rp "The app's package on Google Play (never changes once published) [$suggestion]: " package
+    fi
+    package="${package:-$suggestion}"
+  fi
+  [[ "$package" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]] || die "--package: like io.github.me.my_game (lower case, dots)"
+
+  local home="${JUMPHP_HOME:-$HOME/.jumphp}" accept=0
+  mkdir -p "$home/android/keys" "$home/android-sdk" "$home/gradle" && chmod 700 "$home/android/keys"
+  if [ ! -d "$home/android-sdk/platforms" ]; then
+    say "the Android SDK is needed (~1 GB, once, in $home/android-sdk). Google's license:"
+    echo "    https://developer.android.com/studio/terms" >&2
+    [ -t 0 ] || die "run bin/jumphp twa in a terminal once, to accept the Android SDK's license"
+    local answer; read -rp "Do you accept the Android SDK license? [y/N] " answer
+    [[ "$answer" =~ ^[yYoO] ]] || die "not accepted: no Android app"
+    accept=1
+  fi
+  local image="${JUMPHP_TWA_IMAGE:-jumphp/twa:dev}"
+  docker image inspect "$image" >/dev/null 2>&1 || { say "building $image (first time, ~2 min)"; docker build -t "$image" docker/twa; }
+  local log; log="$(mktemp)"
+  docker run --rm --init $TTY_FLAGS --network host --user "$(id -u):$(id -g)" \
+    "${WS[@]}" -v "$home/android/keys:/keys" -v "$home/android-sdk:/opt/android-sdk" -v "$home/gradle:/gradle" \
+    -e HOME=/tmp/home -e GRADLE_USER_HOME=/gradle -e GAME="$game" -e URL="$url" -e PACKAGE="$package" -e NAME="$name" \
+    -e BUMP="$bump" -e ACCEPT_LICENSE="$accept" \
+    "$image" bash /workspace/tools/twa.sh | tee "$log"
+  local aab apk fingerprint host
+  aab="$(sed -n 's/^AAB=//p' "$log")"; apk="$(sed -n 's/^APK=//p' "$log")"; fingerprint="$(sed -n 's/^FINGERPRINT=//p' "$log")"
+  rm -f "$log"
+  [ -n "$aab" ] || die "no app built (see above)"
+  host="$(echo "$url" | sed -E 's#^https?://([^/]+).*#\1#')"
+  say "done: ${aab#/workspace/} (Google Play), ${apk#/workspace/} (adb install on a phone)"
+  {
+    echo
+    echo "  The key's SHA-256 fingerprint: $fingerprint"
+    echo "  For the app to open full screen (no address bar), $host must say the app is its own:"
+    if [[ "$host" == *jumphp.net ]]; then
+      echo "    on the playground: Studio > your game > Android app: package $package + this fingerprint"
+      echo "    (or your Claude: MCP update_project with android_package and android_fingerprints)"
+    else
+      echo "    serve $dir/dist/android/assetlinks.json at https://$host/.well-known/assetlinks.json"
+    fi
+    echo "  Then Google Play Console (play.google.com/console): create the app ($package), upload the .aab"
+    echo "  (internal testing first). Play App Signing gives a second fingerprint (Setup > App signing): add it too."
+    echo "  The key: $home/android/keys/$package.keystore (+ .env, its password): back them up; never in git."
+    echo "  Next version: bin/jumphp twa $game (the version goes up by one; twa-manifest.json is in git)."
+  } >&2
+}
+
+# the game as a native Android app (tools/android/build.sh in docker/android-native): on GitHub (the workflow
+# .github/workflows/android.yml, from tools/android/workflow.yml; the release has the .apk and the .aab) or --local.
+# games/<game>/android/app.json (in git): package, version; the upload key: ~/.jumphp/android/keys (never in git).
+cmd_android() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift
+  local local_build=0 package="" version_name=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) local_build=1 ;;
+      --package) package="${2:-}"; shift ;;
+      --package=*) package="${1#*=}" ;;
+      --version-name) version_name="${2:-}"; shift ;;
+      --version-name=*) version_name="${1#*=}" ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  # a game linked from its own repository (the IDE's copy of JumPHP): GitHub's build would push this copy, not the game
+  [ "$local_build" = 1 ] || [ ! -L "$ROOT/$dir" ] || die "$game is kept in its own repository: build its Android app here with --local (or put the game in a JumPHP project)"
+  local state="$ROOT/$dir/android/app.json" code=0
+  mkdir -p "$ROOT/$dir/android"
+  if [ -f "$state" ]; then
+    [ -n "$package" ] || package="$(sed -nE 's/^ *"package": *"([^"]+)".*/\1/p' "$state")"
+    code="$(sed -nE 's/^ *"versionCode": *([0-9]+).*/\1/p' "$state")"
+    [ -n "$version_name" ] || version_name="$(sed -nE 's/^ *"versionName": *"([^"]+)".*/\1/p' "$state")"
+  fi
+  if [ -z "$package" ]; then
+    # the TWA's package if the game has one: the native app replaces it on Google Play (same package, same key)
+    package="$(sed -nE 's/^ *"packageId": *"([^"]+)".*/\1/p' "$ROOT/$dir/android/twa-manifest.json" 2>/dev/null || true)"
+    local owner suggestion
+    owner="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/:]+)/[^/]+$#\1#p' | tr '[:upper:]-' '[:lower:]_')"
+    suggestion="${package:-io.github.${owner:-me}.$(echo "$game" | tr '-' '_')}"
+    if [ -t 0 ]; then
+      read -rp "The app's package on Google Play (never changes once published) [$suggestion]: " package
+    fi
+    package="${package:-$suggestion}"
+  fi
+  [[ "$package" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]] || die "--package: like io.github.me.my_game (lower case, dots)"
+  code=$(( ${code:-0} + 1 ))
+  version_name="${version_name:-1.0}"
+  printf '{\n    "package": "%s",\n    "versionCode": %d,\n    "versionName": "%s"\n}\n' "$package" "$code" "$version_name" > "$state"
+
+  # the upload key (the TWA's if there is one): ~/.jumphp/android/keys/<package>.keystore + .env
+  local home="${JUMPHP_HOME:-$HOME/.jumphp}" image="${JUMPHP_ANDROID_IMAGE:-jumphp/android-native:dev}"
+  local keys="$home/android/keys"
+  mkdir -p "$keys" && chmod 700 "$keys"
+  docker image inspect "$image" >/dev/null 2>&1 || { say "building $image (first time, ~3 min)"; docker build -t "$image" docker/android-native; }
+  if [ ! -f "$keys/$package.keystore" ]; then
+    say "a new upload key: $keys/$package.keystore (back it up; never in git)"
+    local pass; pass="$(head -c 18 /dev/urandom | base64 | tr '+/' '-_')"
+    docker run --rm --user "$(id -u):$(id -g)" -v "$keys:/keys" "$image" keytool -genkeypair -keystore "/keys/$package.keystore" \
+      -storetype PKCS12 -alias upload -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=$package" \
+      -storepass "$pass" -keypass "$pass" >/dev/null 2>&1 || die "keytool failed"
+    printf 'BUBBLEWRAP_KEYSTORE_PASSWORD=%s\nBUBBLEWRAP_KEY_PASSWORD=%s\n' "$pass" "$pass" > "$keys/$package.env"
+    chmod 600 "$keys/$package.keystore" "$keys/$package.env"
+  fi
+  local store_pass key_pass
+  store_pass="$(sed -n 's/^BUBBLEWRAP_KEYSTORE_PASSWORD=//p' "$keys/$package.env")"
+  key_pass="$(sed -n 's/^BUBBLEWRAP_KEY_PASSWORD=//p' "$keys/$package.env")"
+
+  if [ "$local_build" = 1 ]; then
+    local sdk="$home/android-sdk"
+    # a desktop app (ui: webview): the app is its browser build in a WebView (tools/android/webview)
+    if is_app "$game"; then cmd_build "$game"; fi
+    [ -d "$sdk/ndk/29.0.14206865" ] || die "the Android SDK with its NDK is needed in $sdk: run bin/jumphp twa once (it installs the SDK after your yes to its license), then: $sdk/cmdline-tools/latest/bin/sdkmanager --install \"ndk;29.0.14206865\""
+    ensure_vendor "$dir"
+    mkdir -p "$home/android-native"
+    local log; log="$(mktemp)"
+    docker run --rm $TTY_FLAGS --user "$(id -u):$(id -g)" -e HOME=/tmp "${WS[@]}" -v "$home/android-native:/cache" \
+      -v "$sdk:/opt/android-sdk" -v "$keys:/keys:ro" -e GAME="$game" -e PACKAGE="$package" -e VERSION_CODE="$code" \
+      -e VERSION_NAME="$version_name" -e KEYSTORE="/keys/$package.keystore" -e KEYSTORE_PASSWORD="$store_pass" \
+      -e KEY_PASSWORD="$key_pass" -e KEY_ALIAS=upload -e ABIS="${JUMPHP_ANDROID_ABIS:-arm64-v8a x86_64}" \
+      "$image" bash /workspace/tools/android/build.sh | tee "$log"
+    grep -q '^AAB=' "$log" || { rm -f "$log"; die "no app built (see above)"; }
+    say "done: $(sed -n 's#^APK=/workspace/##p' "$log") (a phone: adb install), $(sed -n 's#^AAB=/workspace/##p' "$log") (Google Play)"
+    rm -f "$log"
+    return
+  fi
+
+  # on GitHub: the workflow, the key in the repository's secrets, the push, the run
+  command -v gh >/dev/null 2>&1 || die "gh is needed (JumPHP ships tools/bin/gh): gh auth login (or --local)"
+  local repo; repo="$(project_github_repo)" || die "this project has no GitHub repository of its own (remote origin), or --local"
+  local workflow="$ROOT/.github/workflows/android.yml"
+  mkdir -p "$(dirname "$workflow")"
+  cmp -s "$ROOT/tools/android/workflow.yml" "$workflow" || cp "$ROOT/tools/android/workflow.yml" "$workflow"
+  if ! gh secret list -R "$repo" 2>/dev/null | grep -q '^ANDROID_KEYSTORE_BASE64'; then
+    [ -t 0 ] || die "run bin/jumphp android in a terminal once: it asks before sending the signing key to GitHub"
+    local answer
+    read -rp "Send the upload key ($package) to the secrets of $repo (encrypted, used by the workflow only)? [y/N] " answer
+    [[ "$answer" =~ ^[yYoO] ]] || die "not sent: no build on GitHub (--local builds here)"
+    base64 -w0 "$keys/$package.keystore" | gh secret set ANDROID_KEYSTORE_BASE64 -R "$repo"
+    printf '%s' "$store_pass" | gh secret set ANDROID_KEYSTORE_PASSWORD -R "$repo"
+    printf '%s' "$key_pass" | gh secret set ANDROID_KEY_PASSWORD -R "$repo"
+  fi
+  local branch; branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+  git -C "$ROOT" add "$workflow" "$state"
+  git -C "$ROOT" diff --cached --quiet || git -C "$ROOT" commit -q -m "Android app of $game: version $code ($version_name)"
+  if [ -n "$(git -C "$ROOT" log "@{u}..HEAD" --oneline 2>/dev/null || echo new)" ]; then
+    if [ -t 0 ]; then
+      local answer
+      read -rp "Push $branch to GitHub ($repo) to build from it? [Y/n] " answer
+      [[ "$answer" =~ ^[nN] ]] && die "not pushed: the workflow builds what is on GitHub"
+    fi
+    git -C "$ROOT" push -q -u origin "$branch"
+  fi
+  say "GitHub builds the app ($package $version_name, version $code): first time ~25 min, then ~8"
+  gh workflow run android.yml -R "$repo" --ref "$branch" -f game="$game" -f package="$package" -f version_code="$code" \
+    -f version_name="$version_name"
+  sleep 5
+  local run; run="$(gh run list -R "$repo" --workflow android.yml -L 1 --json databaseId -q '.[0].databaseId')"
+  echo "  https://github.com/$repo/actions/runs/$run" >&2
+  gh run watch "$run" -R "$repo" --exit-status >/dev/null || die "the build failed: gh run view $run -R $repo --log-failed"
+  mkdir -p "$ROOT/$dir/dist/android-native"
+  gh run download "$run" -R "$repo" -D "$ROOT/$dir/dist/android-native" >/dev/null
+  find "$ROOT/$dir/dist/android-native" -mindepth 2 -type f -exec mv -f {} "$ROOT/$dir/dist/android-native/" \; 2>/dev/null
+  find "$ROOT/$dir/dist/android-native" -mindepth 1 -type d -empty -delete
+  say "done: the release android-$game-$version_name-$code on GitHub, and $dir/dist/android-native/ (.apk: a phone, .aab: Google Play)"
+  echo "  Google Play: docs/android-native.md (the first upload in the Play Console by hand)." >&2
+}
+
+# the game as native Apple apps, macOS and iPhone / iPad (tools/apple/build.sh: Xcode, so a Mac): on GitHub (the
+# workflow .github/workflows/apple.yml, from tools/apple/workflow.yml, on a macOS runner; the release has the apps and
+# their screenshots) or --local on a Mac. games/<game>/apple/app.json (in git): bundle identifier, version, build.
+cmd_apple() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift
+  local local_build=0 bundle="" version="" platforms=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) local_build=1 ;;
+      --macos) platforms="$platforms macos" ;;
+      --ios) platforms="$platforms ios" ;;
+      --bundle-id) bundle="${2:-}"; shift ;;
+      --bundle-id=*) bundle="${1#*=}" ;;
+      --version) version="${2:-}"; shift ;;
+      --version=*) version="${1#*=}" ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  # a desktop app (ui: webview): iOS here (a WKWebView on its browser build), its Mac app is Tauri's (app:export --macos)
+  if is_app "$game"; then
+    [[ "$platforms" != *macos* ]] || die "$game is a desktop app: its Mac app is bin/jumphp app:export $game --macos"
+    platforms="${platforms:-ios}"
+  fi
+  platforms="$(echo "${platforms:-macos ios}" | xargs)"
+  [ "$local_build" = 1 ] || [ ! -L "$ROOT/$dir" ] || die "$game is kept in its own repository: GitHub's Macs build from a JumPHP project (put the game in one), or --local on a Mac"
+  local state="$ROOT/$dir/apple/app.json" build=0
+  mkdir -p "$ROOT/$dir/apple"
+  if [ -f "$state" ]; then
+    [ -n "$bundle" ] || bundle="$(sed -nE 's/^ *"bundleId": *"([^"]+)".*/\1/p' "$state")"
+    build="$(sed -nE 's/^ *"build": *([0-9]+).*/\1/p' "$state")"
+    [ -n "$version" ] || version="$(sed -nE 's/^ *"version": *"([^"]+)".*/\1/p' "$state")"
+  fi
+  if [ -z "$bundle" ]; then
+    local owner suggestion
+    owner="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/:]+)/[^/]+$#\1#p' | tr '[:upper:]_' '[:lower:]-')"
+    suggestion="io.github.${owner:-me}.$game"
+    if [ -t 0 ]; then
+      read -rp "The apps' bundle identifier (App Store; never changes once published) [$suggestion]: " bundle
+    fi
+    bundle="${bundle:-$suggestion}"
+  fi
+  [[ "$bundle" =~ ^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$ ]] || die "--bundle-id: like io.github.me.my-game (letters, digits, hyphens, dots)"
+  build=$(( ${build:-0} + 1 ))
+  version="${version:-1.0}"
+  printf '{\n    "bundleId": "%s",\n    "build": %d,\n    "version": "%s"\n}\n' "$bundle" "$build" "$version" > "$state"
+
+  if [ "$local_build" = 1 ]; then
+    [ "$(uname)" = Darwin ] || die "--local builds on a Mac with Xcode; elsewhere, without --local: on GitHub's Macs"
+    [ -f "$ROOT/$dir/vendor/autoload.php" ] || (cd "$ROOT/$dir" && composer install --no-dev --no-interaction --ignore-platform-reqs)
+    if is_app "$game"; then cmd_build "$game"; fi
+    GAME="$game" PLATFORMS="$platforms" BUNDLE_ID="$bundle" VERSION="$version" BUILD="$build" bash "$ROOT/tools/apple/build.sh"
+    bash "$ROOT/tools/apple/check.sh" "$game" "$platforms"
+    say "done: $dir/dist/apple/ (screenshots in check/)"
+    return
+  fi
+
+  # on GitHub: the workflow, the push, the run on a macOS runner, the apps downloaded
+  if origin_is_forge && [ -z "${JUMPHP_MAC_RUNNER:-}" ]; then
+    die "the remote origin is a forge (git.jumphp.net), which has no macOS runner: Apple apps are built on GitHub's Macs. Put the project on GitHub (git remote add github <url>, origin = that repository) or register your own Mac runner and set JUMPHP_MAC_RUNNER=1 (docs/apple.md)"
+  fi
+  command -v gh >/dev/null 2>&1 || die "gh is needed (JumPHP ships tools/bin/gh): gh auth login"
+  local repo; repo="$(project_github_repo)" || die "this project has no GitHub repository of its own (remote origin)"
+  local workflow="$ROOT/.github/workflows/apple.yml"
+  mkdir -p "$(dirname "$workflow")"
+  cmp -s "$ROOT/tools/apple/workflow.yml" "$workflow" || cp "$ROOT/tools/apple/workflow.yml" "$workflow"
+  local branch; branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+  git -C "$ROOT" add "$workflow" "$state"
+  git -C "$ROOT" diff --cached --quiet || git -C "$ROOT" commit -q -m "Apple apps of $game: build $build ($version)"
+  if [ -n "$(git -C "$ROOT" log "@{u}..HEAD" --oneline 2>/dev/null || echo new)" ]; then
+    if [ -t 0 ]; then
+      local answer
+      read -rp "Push $branch to GitHub ($repo) to build from it? [Y/n] " answer
+      [[ "$answer" =~ ^[nN] ]] && die "not pushed: the workflow builds what is on GitHub"
+    fi
+    git -C "$ROOT" push -q -u origin "$branch"
+  fi
+  # the game's files that git ignores (the data of an original game): in a draft release of the repository, which
+  # only its writers see (never a public release); the workflow puts them back before the build
+  local private
+  private="$(cd "$ROOT/$dir" && git ls-files --others --ignored --exclude-standard . 2>/dev/null \
+    | grep -vE '^(vendor|var|dist|cache|android|apple|tests|site|node_modules)/|(^|/)core(\.[0-9]+)?$|\.phpunit' || true)"
+  if [ -n "$private" ]; then
+    local count send=0; count="$(printf '%s\n' "$private" | wc -l | xargs)"
+    if [ -t 0 ]; then
+      local answer
+      read -rp "$count files of $dir are not in git (e.g. $(printf '%s\n' "$private" | head -1)). Send them to a draft release of $repo (only its writers see it) for the build? [y/N] " answer
+      [[ "$answer" =~ ^[yYoO] ]] && send=1
+    elif [ "${JUMPHP_PRIVATE_FILES:-}" = 1 ]; then
+      send=1
+    fi
+    if [ "$send" = 1 ]; then
+      local archive; archive="$(mktemp -d)/private.tar.gz"
+      printf '%s\n' "$private" | tar -czf "$archive" -C "$ROOT/$dir" -T -
+      gh release view "apple-private-$game" -R "$repo" >/dev/null 2>&1 \
+        || gh release create "apple-private-$game" -R "$repo" --draft --title "$game: private files (Apple build)" \
+             --notes "The files of $dir that are not in git, for the workflow apple.yml. A draft: only the repository's writers see it. Never publish it." >/dev/null
+      gh release upload "apple-private-$game" "$archive" -R "$repo" --clobber >/dev/null
+      rm -rf "$(dirname "$archive")"
+      say "$count private files sent (draft release apple-private-$game)"
+    else
+      say "$count files of $dir are not in git and stay here: the apps are built without them (JUMPHP_PRIVATE_FILES=1 sends them)"
+    fi
+  fi
+  say "GitHub builds the apps on a Mac ($bundle $version, build $build: $platforms): first time ~40 min, then ~10"
+  # a workflow just pushed for the first time: GitHub needs a few seconds to know it
+  local try
+  for try in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    gh workflow run apple.yml -R "$repo" --ref "$branch" -f game="$game" -f bundle_id="$bundle" -f version="$version" \
+      -f build="$build" -f platforms="$platforms" 2>/dev/null && break
+    [ "$try" = 12 ] && die "GitHub does not start the workflow apple.yml (gh workflow list -R $repo)"
+    sleep 5
+  done
+  sleep 5
+  local run; run="$(gh run list -R "$repo" --workflow apple.yml -L 1 --json databaseId -q '.[0].databaseId')"
+  echo "  https://github.com/$repo/actions/runs/$run" >&2
+  gh run watch "$run" -R "$repo" --exit-status >/dev/null || die "the build failed: gh run view $run -R $repo --log-failed"
+  local out="$ROOT/$dir/dist/apple"
+  rm -rf "$out" && mkdir -p "$out"
+  gh run download "$run" -R "$repo" -D "$out" >/dev/null
+  local sub; sub="$(find "$out" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  [ -n "$sub" ] && { cp -R "$sub"/. "$out"/ && rm -rf "$sub"; }
+  say "done: the release apple-$game-$version-$build on GitHub, and $dir/dist/apple/ (screenshots in check/)"
+  echo "  A Mac: the .dmg (right click > Open the first time). iPhone / iPad: the .ipa, signed with an Apple account (docs/apple.md)." >&2
+}
+
+# the game as one executable (tools/standalone.sh in docker/standalone): StaticPHP's micro (PHP + SDL, OpenGL, OpenAL)
+# + the game as a PHAR. The micro binaries are kept in ~/.jumphp/standalone (downloaded from JumPHP's releases, or
+# built here for Linux: ~15 min once)
+cmd_export_standalone() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift
+  if is_cli "$game" && [ -z "${JUMPHP_STANDALONE_BOOT:-}" ]; then cmd_cli_export "$game" "$@"; return; fi
+  local targets=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --linux) targets+=(linux-x86_64) ;;
+      --windows) targets+=(windows-x86_64) ;;
+      --macos-arm64) targets+=(macos-arm64) ;;     # desktop apps (app:export --macos), not games: bin/jumphp apple
+      --macos-x86_64) targets+=(macos-x86_64) ;;
+      *) die "unknown option $1 (--linux, --windows$(is_cli "$game" && echo ', --macos'))" ;;
+    esac
+    shift
+  done
+  [ ${#targets[@]} -gt 0 ] || targets=(linux-x86_64)
+  ensure_vendor "$dir"
+  local hybrid=""
+  if is_hybrid "$game" && [ -z "${JUMPHP_STANDALONE_EXTENSIONS:-}" ]; then hybrid_export_env; hybrid=1; fi
+  local home="${JUMPHP_HOME:-$HOME/.jumphp}" image="${JUMPHP_STANDALONE_IMAGE:-jumphp/standalone:dev}" target out log
+  mkdir -p "$home/standalone"
+  docker image inspect "$image" >/dev/null 2>&1 || { say "building $image (first time, ~3 min)"; docker build -t "$image" docker/standalone; }
+  for target in "${targets[@]}"; do
+    # a hybrid game carries the Tauri library of the system it is made for (not this computer's Linux one)
+    if [ -n "$hybrid" ]; then
+      case "$target" in
+        windows-x86_64) ensure_tauri_platform_lib windows-x86_64; export JUMPHP_STANDALONE_NATIVE=build/tauri/windows-x86_64/jumphp_tauri.dll ;;
+        *) export JUMPHP_STANDALONE_NATIVE="$TAURI_LIB" ;;
+      esac
+    fi
+    log="$(mktemp)"
+    docker run --rm $TTY_FLAGS --user "$(id -u):$(id -g)" "${WS[@]}" -v "$home/standalone:/cache" \
+      -e HOME=/tmp -e GAME="$game" -e TARGET="$target" -e JUMPHP_STANDALONE_PHP -e JUMPHP_STANDALONE_BUILD \
+      -e JUMPHP_STANDALONE_EXTENSIONS -e JUMPHP_STANDALONE_SPC -e JUMPHP_STANDALONE_BOOT -e JUMPHP_STANDALONE_NATIVE -e JUMPHP_STANDALONE_NATIVE_DIR -e JUMPHP_STANDALONE_INI -e JUMPHP_STANDALONE_CONSOLE \
+      "$image" bash /workspace/tools/standalone.sh | tee "$log"
+    out="$(sed -n 's/^OUT=//p' "$log")"; rm -f "$log"
+    [ -n "$out" ] || die "no executable for $target (see above)"
+    say "done: ${out#/workspace/} ($(du -h "$ROOT/${out#/workspace/}" | cut -f1))"
+  done
+  echo "  One file to give: the player runs it (Linux: chmod +x first if it was downloaded). The first launch unpacks" >&2
+  echo "  the game in the player's cache; saves and options go to their data folder (docs/standalone.md)." >&2
+}
+
+# jumphp2installer's base installers (its newest release), in .cache/installer-bases (seen from Docker); once a day
+ensure_installer_bases() {
+  local dir="$ROOT/.cache/installer-bases" repo="${JUMPHP2INSTALLER_REPO:-jumphp/jumphp2installer}" forge="${JUMPHP2INSTALLER_FORGE:-https://git.jumphp.net}" f tag
+  mkdir -p "$dir"
+  # the newest release's tag (the forge has no /releases/latest/download: its API gives the tag)
+  tag="$(curl -fsSL "$forge/api/v1/repos/$repo/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p' | head -1)"
+  for f in jumphp2installer-linux-x86_64 jumphp2installer-windows-x86_64.exe jumphp2installer-macos.zip; do
+    [ -n "$(find "$dir/$f" -mtime -1 2>/dev/null)" ] && continue
+    say "base installer $f ($repo)"
+    curl -fsSL -o "$dir/$f.part" "$forge/$repo/releases/download/${tag:-latest}/$f" && mv "$dir/$f.part" "$dir/$f" \
+      || { rm -f "$dir/$f.part"; [ -f "$dir/$f" ] && warn "could not refresh $f: the one from before is used" || die "could not download $f from $repo"; }
+  done
+}
+
+# the installer of a game / app (tools/game-installer.php): GitHub release or a folder for any web host
+cmd_installer() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift || true
+  local target="" url="" version="" build=1 platforms=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --github) target=github ;;
+      --url) target=dir; url="${2:-}"; shift ;;
+      --standalone) target=standalone ;;
+      --windows|--linux|--macos) platforms+=("${1#--}") ;;
+      --version) version="${2:-}"; shift ;;
+      --no-build) build=0 ;;
+      --jumphp) die "on jumphp.net: the JumPHP IDE (jumphp.net window, or Create an Installer…) sends the files and makes it" ;;
+      *) die "unknown option $1 (--github, --url https://..., --standalone, --windows --linux --macos, --version X, --no-build)" ;;
+    esac
+    shift
+  done
+  [ -n "$target" ] || die "where: --github (a release of the project's repository), --url https://site/folder/ (a folder to put there) or --standalone (the game inside each installer, no site)"
+  if [ ${#platforms[@]} -eq 0 ]; then
+    platforms=(windows linux)
+    compgen -G "$ROOT/$dir/dist/apple/*-macos.zip" >/dev/null || compgen -G "$ROOT/$dir/dist/standalone/*-macos.zip" >/dev/null \
+      || { is_cli "$game" && compgen -G "$ROOT/$dir/dist/standalone/*-macos-arm64" >/dev/null; } && platforms+=(macos)
+  fi
+  [ -n "$version" ] || version="$(sed -nE 's/^[[:space:]]*version:[[:space:]]*["'"'"']?([^"'"'"' #]+).*/\1/p' "$(project_yaml "$ROOT/$dir")" | head -1)"
+  [ -n "$version" ] || version=1.0
+  local repo=""
+  if [ "$target" = github ]; then
+    command -v gh >/dev/null 2>&1 || die "gh is needed (JumPHP ships tools/bin/gh): gh auth login"
+    repo="$(project_github_repo)" || die "this project has no GitHub repository of its own (remote origin): create it first (IDE: New Project makes one; else gh repo create <name> --source . --remote origin --push)"
+    [ "$(gh repo view "$repo" --json visibility -q .visibility 2>/dev/null)" = PUBLIC ] \
+      || warn "$repo is not public: the players' installers cannot download its releases"
+  fi
+  ensure_vendor "$dir"
+  ensure_engine_tools     # symfony/yaml for tools/game-installer.php when the app has none (CLI apps)
+  if [ "$build" = 1 ]; then
+    local exports=() p
+    # macOS is built here only for CLI apps (two executables); games and apps: GitHub's Macs / app:export --macos
+    for p in "${platforms[@]}"; do { [ "$p" != macos ] || is_cli "$game"; } && exports+=("--$p"); done
+    if [ ${#exports[@]} -gt 0 ]; then
+      if is_app "$game"; then cmd_app_export "$game" "${exports[@]}"; else cmd_export_standalone "$game" "${exports[@]}"; fi
+    fi
+  fi
+  ensure_installer_bases
+  # standalone: base installers that look for the package inside them (jumphp2installer 0.2.6+), else the newest now
+  if [ "$target" = standalone ] && ! grep -q 'Binary::PAYLOAD' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64"; then
+    rm -f "$ROOT"/.cache/installer-bases/jumphp2installer-*
+    ensure_installer_bases
+    grep -q 'Binary::PAYLOAD' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64" \
+      || die "the base installers of jumphp2installer's newest release cannot hold a game (0.2.6 or newer is needed)"
+  fi
+  # a CLI app's installers put it on the PATH (the command step, jumphp2installer 0.2.8+)
+  if is_cli "$game" && ! grep -q 'stepCommand' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64"; then
+    rm -f "$ROOT"/.cache/installer-bases/jumphp2installer-*
+    ensure_installer_bases
+    grep -q 'stepCommand' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64" \
+      || die "the base installers of jumphp2installer's newest release cannot install a command (0.2.8 or newer is needed)"
+  fi
+  local list; list="$(IFS=,; echo "${platforms[*]}")"
+  local where; case "$target" in github) where="GitHub release of $repo" ;; standalone) where="standalone: the game inside" ;; *) where="$url" ;; esac
+  say "$dir: the installer ($list, v$version, $where)"
+  local args=(--target "$target" --version "$version" --platforms "$list" --publisher "$(git -C "$ROOT" config user.name 2>/dev/null || true)")
+  # a "start with the computer" box (project.yaml app.autostart) when the base installers know the step (0.2.9+)
+  grep -q 'stepAutostart' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64" && args+=(--autostart 1)
+  # an update quits the app first when it is open (the stop step, 0.2.10+: its files are in use)
+  grep -q 'stepStop' "$ROOT/.cache/installer-bases/jumphp2installer-linux-x86_64" && args+=(--stop 1)
+  case "$target" in
+    github)
+      args+=(--repo "$repo")
+      # a project on a forge (git.jumphp.net): the installers cannot follow `github:owner/repo` there, they read the newest release's files by address
+      origin_is_forge && args+=(--forge "$(git -C "$ROOT" remote get-url origin | sed -E 's#^(https://)([^@/]*@)?([^/]+)/.*#\1\3#')") ;;
+    dir) args+=(--url "$url") ;;
+  esac
+  php_run . -- php -d phar.readonly=0 tools/game-installer.php "$dir" .cache/installer-bases "${args[@]}"
+  local out="$ROOT/$dir/dist/installer"
+  if [ "$target" = standalone ]; then
+    say "done: ${out#"$ROOT"/}/ — one installer per system, the game inside (no network needed, no update):"
+    sed -nE 's/^ *"file": "([^"]+)".*/  \1/p' "$out/installer.json" >&2
+    return
+  fi
+  if [ "$target" = github ]; then
+    local tag="v$version" files=()
+    mapfile -t files < <(find "$out" -maxdepth 1 -type f ! -name installer.json | sort)
+    local names=() p
+    for p in "${platforms[@]}"; do case "$p" in windows) names+=(Windows) ;; linux) names+=(Linux) ;; macos) names+=(macOS) ;; esac; done
+    if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+      gh release edit "$tag" --repo "$repo" --latest >/dev/null
+    else
+      gh release create "$tag" --repo "$repo" --latest --title "$tag" --notes "Installers: $(IFS=,; echo "${names[*]}" | sed 's/,/, /g') (bin/jumphp installer)." >/dev/null
+    fi
+    say "uploading ${#files[@]} files to the release $tag of $repo"
+    gh release upload "$tag" --repo "$repo" "${files[@]}" --clobber
+    if origin_is_forge; then
+      say "done: $(git -C "$ROOT" remote get-url origin | sed -E 's#^(https://)([^@/]*@)?([^/]+)/.*#\1\3#')/$repo/releases/latest — the installers to give:"
+    else
+      say "done: https://github.com/$repo/releases/latest — the installers to give:"
+    fi
+  else
+    printf '%s\n' "Put every file of this folder at $url (the same address, nothing renamed): the installers read" \
+      "install.yaml and version.json there. A new version: bin/jumphp installer again, then replace the files." > "$out/README.txt"
+    say "done: ${out#"$ROOT"/}/ — put its files at $url; the installers to give:"
+  fi
+  sed -nE 's/^ *"url": "([^"]+)".*/  \1/p' "$out/installer.json" >&2
+}
+
+# the `jumphp` command for the whole system (tools/jumphp-cli): `jumphp test pong` from any folder of a project,
+# `jumphp new <folder>`, and a question when a newer JumPHP is on Packagist. In ~/.local/bin (no sudo).
+cmd_cli_install() {
+  local bin="${JUMPHP_BIN_DIR:-$HOME/.local/bin}"
+  mkdir -p "$bin"
+  install -m 755 "$ROOT/tools/jumphp-cli" "$bin/jumphp"
+  say "installed: $bin/jumphp (jumphp help, jumphp new <folder>, jumphp cli:version)"
+  case ":$PATH:" in
+    *":$bin:"*) ;;
+    *)
+      local rc="$HOME/.bashrc" answer=""
+      case "${SHELL:-}" in */zsh) rc="$HOME/.zshrc" ;; esac
+      warn "$bin is not in your PATH"
+      if [ -t 0 ]; then
+        read -rp "Add it to $rc? [Y/n] " answer
+        case "$answer" in n|N) ;; *)
+          printf '\n# the jumphp command (JumPHP)\nexport PATH="%s:$PATH"\n' "$bin" >> "$rc"
+          say "added to $rc: open a new terminal (or: source $rc)" ;;
+        esac
+      else
+        echo "    add to your shell's profile: export PATH=\"$bin:\$PATH\"" >&2
+      fi ;;
+  esac
+}
+
+cmd_cli_uninstall() {
+  local bin="${JUMPHP_BIN_DIR:-$HOME/.local/bin}"
+  if [ -f "$bin/jumphp" ] && grep -q 'CLI_VERSION=' "$bin/jumphp"; then rm -f "$bin/jumphp"; say "removed: $bin/jumphp"; else say "no jumphp command in $bin"; fi
+  rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/jumphp"
+}
+
+cmd_run() {
+  # `bin/jumphp run` alone, or followed by the program's own arguments (a CLI app's command): the default game
+  if [ -z "${1:-}" ] || [ -z "$(project_path "$1")" ]; then
+    local g; g="$(default_project)"
+    [ -n "$g" ] || die "which project? bin/jumphp run <id> (or run it inside games/<id>/ or apps/<id>/, or set JUMPHP_APP in .env)"
+    set -- "$g" "$@"
+  fi
+  if is_app "${1:-}"; then cmd_app_run "$@"; return; fi
+  if is_cli "${1:-}"; then cmd_cli_run "$@"; return; fi
+  if is_plugin "${1:-}"; then cmd_plugin_run "$@"; return; fi
+  local dir; dir="$(project_dir "${1:-}")"
+  ensure_vendor "$dir"
+  local flags=(--network host -e "JUMPHP_NET_URL=${JUMPHP_NET_URL:-}" -e "JUMPHP_DEBUG=${JUMPHP_DEBUG:-}"
+               -e "JUMPHP_MAX_FRAMES=${JUMPHP_MAX_FRAMES:-}" -e "JUMPHP_SCENE=${JUMPHP_SCENE:-}" -e "JUMPHP_SCENE_PARAMS=${JUMPHP_SCENE_PARAMS:-}")
+  local xdg="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$xdg/$WAYLAND_DISPLAY" ] && [ "${JUMPHP_X11:-}" != 1 ]; then
+    flags+=(-e XDG_RUNTIME_DIR=/tmp/xdg -e "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" -e SDL_VIDEODRIVER=wayland
+            -v "$xdg/$WAYLAND_DISPLAY:/tmp/xdg/$WAYLAND_DISPLAY")
+  elif [ -n "${DISPLAY:-}" ]; then
+    flags+=(-e "DISPLAY=$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix:ro -e SDL_VIDEODRIVER=x11)
+    if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
+      flags+=(-v "$XAUTHORITY:/tmp/.Xauthority:ro" -e XAUTHORITY=/tmp/.Xauthority)
+    elif [ -f "$HOME/.Xauthority" ]; then
+      flags+=(-v "$HOME/.Xauthority:/tmp/.Xauthority:ro" -e XAUTHORITY=/tmp/.Xauthority)
+    fi
+  else
+    die "no display (DISPLAY / WAYLAND_DISPLAY). Headless: bin/jumphp test $1 or bin/jumphp shot $1"
+  fi
+  if [ -S "$xdg/pulse/native" ]; then
+    flags+=(-v "$xdg/pulse/native:/tmp/pulse-native" -e PULSE_SERVER=unix:/tmp/pulse-native)
+    [ -f "$HOME/.config/pulse/cookie" ] && flags+=(-v "$HOME/.config/pulse/cookie:/tmp/pulse-cookie:ro" -e PULSE_COOKIE=/tmp/pulse-cookie)
+  else
+    warn "no PulseAudio/PipeWire socket at $xdg/pulse/native: no sound"
+    flags+=(-e SDL_AUDIODRIVER=dummy)
+  fi
+  if [ -d /dev/dri ]; then
+    flags+=(--device /dev/dri)
+    for grp in video render; do
+      local gid; gid="$(getent group "$grp" | cut -d: -f3 || true)"
+      [ -n "$gid" ] && flags+=(--group-add "$gid")
+    done
+    # A recent AMD GPU (RDNA 3.5: Strix Halo / Strix Point, gfx1150 and above) is unknown to the image's LLVM 15: radeonsi bails out and the
+    # window is drawn by the CPU (a big window lags). OpenGL over Vulkan (zink + RADV, no LLVM) uses the GPU: ~60 -> ~100 fps seen on gfx1151.
+    # JUMPHP_MESA_DRIVER=<driver> forces another driver (radeonsi, iris, llvmpipe...), also in .env.
+    local gfx; gfx="$(cat /sys/class/kfd/kfd/topology/nodes/*/properties 2>/dev/null | sed -n 's/^gfx_target_version //p' | sort -n | tail -1)"
+    if [ -n "${JUMPHP_MESA_DRIVER:-}" ]; then
+      flags+=(-e "MESA_LOADER_DRIVER_OVERRIDE=$JUMPHP_MESA_DRIVER")
+    elif [ "${gfx:-0}" -ge 110500 ] 2>/dev/null; then
+      flags+=(-e MESA_LOADER_DRIVER_OVERRIDE=zink)
+    fi
+  fi
+  # NVIDIA's own driver (not nouveau) lives on the host: Docker's NVIDIA container toolkit injects its GL / EGL libraries into the container
+  if [ -e /dev/nvidiactl ]; then
+    if docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
+      flags+=(--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e __GLX_VENDOR_LIBRARY_NAME=nvidia)
+    else
+      warn "NVIDIA GPU without the NVIDIA container toolkit: drawn by the CPU. Install nvidia-container-toolkit (nvidia-ctk runtime configure --runtime=docker) for the GPU."
+    fi
+  fi
+  if is_hybrid "${1:-}"; then run_game_hybrid "$dir" "${flags[@]}"; return; fi
+  php_run "$dir" "${flags[@]}" -- php app.php
+}
+
+cmd_test() {
+  local target="${1:-}"
+  if [ "$target" = "engine" ]; then
+    ensure_vendor engine
+    say "engine: phpunit"
+    php_run engine -e SDL_VIDEODRIVER=dummy -e SDL_AUDIODRIVER=dummy -- vendor/bin/phpunit
+    say "engine: phpstan"
+    php_run engine -- vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+    return
+  fi
+  if is_app "$target"; then cmd_app_test "$@"; return; fi
+  if is_cli "$target"; then cmd_cli_test "$@"; return; fi
+  if is_plugin "$target"; then cmd_plugin_test "$@"; return; fi
+  local dir; dir="$(project_dir "$target")"
+  ensure_vendor "$dir"
+  live_announce
+  # one test file (the IDE's Play on a test): only its PHPUnit tests; a third argument = one test method (--filter)
+  if [ -n "${2:-}" ]; then
+    local only="${2#"$dir"/}"
+    [ -f "$ROOT/$dir/$only" ] || die "no test file $dir/$only"
+    ensure_engine_tools
+    say "$dir: phpunit $only"
+    php_run "$dir" -e SDL_VIDEODRIVER=dummy -e SDL_AUDIODRIVER=dummy -- /workspace/engine/vendor/bin/phpunit --bootstrap vendor/autoload.php --testdox ${3:+--filter "$3"} "$only"
+    return
+  fi
+  [ -d "$ROOT/$dir/tests" ] && ensure_engine_tools
+  say "$dir: php -l"
+  php_run "$dir" -- sh -c 'find src app.php -name "*.php" -print0 | xargs -0 -n1 php -l >/dev/null'
+  if [ -f "$ROOT/$dir/phpstan.neon" ] && [ -x "$ROOT/engine/vendor/bin/phpstan" ]; then
+    say "$dir: phpstan"
+    php_run "$dir" -- /workspace/engine/vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+  fi
+  if [ -d "$ROOT/$dir/tests" ] && [ -x "$ROOT/engine/vendor/bin/phpunit" ]; then
+    say "$dir: phpunit"
+    php_run "$dir" -e SDL_VIDEODRIVER=dummy -e SDL_AUDIODRIVER=dummy -- /workspace/engine/vendor/bin/phpunit --bootstrap vendor/autoload.php --testdox tests
+  fi
+  say "$dir: headless smoke test (${JUMPHP_MAX_FRAMES:-600} frames$([ -n "$(gl_flags "$dir")" ] && echo ', OpenGL on Xvfb'))"
+  # shellcheck disable=SC2046
+  php_run "$dir" $(gl_flags "$dir") -e JUMPHP_SMOKE=1 -e "JUMPHP_MAX_FRAMES=${JUMPHP_MAX_FRAMES:-600}" \
+    -e "JUMPHP_SCENE=${JUMPHP_SCENE:-}" -e "JUMPHP_SCENE_PARAMS=${JUMPHP_SCENE_PARAMS:-}" -e "JUMPHP_INPUT=${JUMPHP_INPUT:-}" \
+    -- $(gl_wrap "$dir") php app.php
+  say "$dir: all checks passed"
+}
+
+cmd_shot() {
+  if is_app "${1:-}"; then cmd_app_shot "$@"; return; fi
+  if is_cli "${1:-}"; then cmd_cli_shot "$@"; return; fi
+  local dir; dir="$(project_dir "${1:-}")"
+  local frames="${2:-120}" out="${3:-var/screenshots/shot.png}"
+  ensure_vendor "$dir"
+  rm -f "$ROOT/$dir/${out%.png}"-[0-9]*.png   # frames of an earlier JUMPHP_SHOT_EVERY run
+  live_announce
+  # shellcheck disable=SC2046
+  php_run "$dir" $(gl_flags "$dir") -e "JUMPHP_SCREENSHOT=$out" -e "JUMPHP_MAX_FRAMES=$frames" -e "JUMPHP_SHOT_EVERY=${JUMPHP_SHOT_EVERY:-0}" \
+    -e "JUMPHP_SCENE=${JUMPHP_SCENE:-}" -e "JUMPHP_SCENE_PARAMS=${JUMPHP_SCENE_PARAMS:-}" -e "JUMPHP_INPUT=${JUMPHP_INPUT:-}" \
+    -- $(gl_wrap "$dir") php app.php
+  echo "$ROOT/$dir/$out"
+}
+
+# a first web site for the game (games/<game>/site/, AGENTS.md §13) from its game.yaml and screenshots of its smoke demo
+cmd_site_new() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"; shift || true
+  ensure_vendor "$dir"
+  local shots="var/screenshots/site" smoke
+  rm -rf "${ROOT:?}/$dir/$shots" && mkdir -p "$ROOT/$dir/$shots"
+  # the scene shot: the game's self-playing demo (game.yaml smoke) when it has one
+  smoke="$(php_run "$dir" -- php -r 'require "vendor/autoload.php"; $s = JumPHP\Kernel\GameConfig::load(".")->get("smoke", []);
+    echo empty($s["scene"]) ? "" : $s["scene"] . "\t" . json_encode($s["params"] ?? new stdClass());' 2>/dev/null)" || smoke=""
+  say "screenshots of $game"
+  JUMPHP_SCENE="${smoke%%$'\t'*}" JUMPHP_SCENE_PARAMS="$([ -n "$smoke" ] && echo "${smoke#*$'\t'}")" JUMPHP_SHOT_EVERY=120 \
+    cmd_shot "$game" 600 "$shots/shot.png" >/dev/null
+  php_run . -- php tools/new-site.php "$dir" "$dir/$shots" "$@"
+}
+
+cmd_build() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  is_cli "$game" && die "$dir is a CLI app: it runs in a terminal, not in a web page (bin/jumphp export:standalone $game)"
+  [ -f "$ENGINE_DIR/php-web.mjs" ] && [ -f "$ENGINE_DIR/php-web.wasm" ] || die "no engine in build/engine: bin/jumphp engine:build first"
+  ensure_videos "$dir"
+  say "staging $dir (composer --no-dev, container dump)"
+  php_run "$dir" -- sh /workspace/tools/stage-web.sh "/workspace/$dir"
+  say "packaging (emscripten file_packager) -> $dir/dist/web"
+  docker run --rm --user "$(id -u):$(id -g)" "${WS[@]}" -w /workspace "$EMSDK_IMAGE" \
+    sh /workspace/tools/package-web.sh "/workspace/$dir"
+  say "done: $dir/dist/web ($(du -sh "$ROOT/$dir/dist/web" | cut -f1)). Try it: bin/jumphp serve $game"
+}
+
+# The game's own web site (games/<id>/site/, AGENTS.md "A web site for the game") at the root of <out>, the
+# browser build in <out>/play/; {{DOMAIN}} replaced in its text files (canonical links, sitemap, og:image).
+assemble_site() {
+  local game="$1" out="$2" domain="$3" pages="$ROOT/$(project_path "$1")/site"
+  mkdir -p "$out"
+  cp -r "$pages/." "$out/"
+  rm -rf "$out/play" && cp -r "$ROOT/$(project_path "$game")/dist/web" "$out/play"
+  (cd "$pages" && find . -type f \( -name '*.html' -o -name '*.xml' -o -name '*.txt' -o -name '*.json' -o -name '*.webmanifest' \)) |
+    while read -r file; do
+      sed "s#{{DOMAIN}}#$domain#g" "$pages/$file" > "$out/$file"
+    done
+}
+
+# The site + the game, as the server will get them, in dist/site ({{DOMAIN}} = localhost:<port>).
+cmd_build_site() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  [ -f "$ROOT/$dir/site/index.html" ] || die "no web site: $dir/site/index.html (AGENTS.md: A web site for the game)"
+  cmd_build "$game"
+  rm -rf "$ROOT/$dir/dist/site"
+  assemble_site "$game" "$ROOT/$dir/dist/site" "localhost:${2:-8080}"
+  say "done: $dir/dist/site. Try it: JUMPHP_WEB=site bin/jumphp serve $game; check it: bin/jumphp siteshot $game"
+}
+
+# Headless Chrome on the site (dist/site): full-page screenshots, desktop and phone, every image loaded,
+# no JavaScript error, no sideways scrolling on a phone.
+cmd_siteshot() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  [ -f "$ROOT/$dir/dist/site/index.html" ] || cmd_build_site "$game" 18998
+  local name="jumphp-siteshot-$game" port=18998
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker run -d --name "$name" -p "127.0.0.1:$port:80" -v "$ROOT/$dir/dist/site:/srv:ro" \
+    -v "$ROOT/docker/web/Caddyfile:/etc/frankenphp/Caddyfile:ro" "$WEB_IMAGE" >/dev/null
+  trap 'docker rm -f "'"$name"'" >/dev/null 2>&1 || true' EXIT
+  sleep 1
+  mkdir -p "$ROOT/$dir/var/screenshots" && chmod 777 "$ROOT/$dir/var/screenshots"
+  local status=0
+  docker run --rm --network host --init -v "$ROOT/tools/webshot:/scripts:ro" -v "$ROOT/$dir/var/screenshots:/out" -w /home/pptruser \
+    "$PUPPETEER_IMAGE" sh -c "cp /scripts/siteshot.cjs . && node siteshot.cjs http://127.0.0.1:$port/ /out" || status=1
+  echo "$ROOT/$dir/var/screenshots/site-desktop.png"
+  echo "$ROOT/$dir/var/screenshots/site-phone.png"
+  return $status
+}
+
+# A remote game (docs/remote.md) in dist/remote: the runtime in engine/, the game's files, manifest, page.
+cmd_build_remote() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  [ -f "$ROOT/build/runtime/version.json" ] || cmd_runtime_build
+  [ -f "$ROOT/$dir/vendor/autoload.php" ] || php_run "$dir" -- composer install --no-interaction
+  ensure_videos "$dir"
+  rm -rf "$ROOT/$dir/dist/remote"
+  php_run "$dir" -- php /workspace/tools/remote-manifest.php "/workspace/$dir" "/workspace/$dir/dist/remote" engine/ /workspace/build/runtime
+  cp -r "$ROOT/build/runtime" "$ROOT/$dir/dist/remote/engine"
+  say "done: $dir/dist/remote. Try it: JUMPHP_WEB=remote bin/jumphp serve $game"
+}
+
+cmd_serve() {
+  local dir; dir="$(project_dir "${1:-}")"
+  local port="${2:-8080}" web="${JUMPHP_WEB:-web}"
+  [ -f "$ROOT/$dir/dist/$web/index.html" ] || die "no browser build: bin/jumphp build ${1}"
+  say "http://localhost:$port/  (Ctrl+C to stop)"
+  docker run --rm $TTY_FLAGS -p "127.0.0.1:$port:80" -v "$ROOT/$dir/dist/$web:/srv:ro" \
+    -v "$ROOT/docker/web/Caddyfile:/etc/frankenphp/Caddyfile:ro" "$WEB_IMAGE"
+}
+
+cmd_webshot() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  local seconds="${2:-8}" keys="${3:-[]}" web="${JUMPHP_WEB:-web}"
+  [ -f "$ROOT/$dir/dist/$web/index.html" ] || die "no browser build: bin/jumphp build $game"
+  local name="jumphp-webshot-$game" port="${JUMPHP_WEBSHOT_PORT:-18999}"
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker run -d --name "$name" -p "127.0.0.1:$port:80" -v "$ROOT/$dir/dist/$web:/srv:ro" \
+    -v "$ROOT/docker/web/Caddyfile:/etc/frankenphp/Caddyfile:ro" "$WEB_IMAGE" >/dev/null
+  trap 'docker rm -f "'"$name"'" >/dev/null 2>&1 || true' EXIT
+  sleep 1
+  chmod 777 "$ROOT/$dir/dist"
+  local status=0
+  docker run --rm --network host --init -v "$ROOT/tools/webshot:/scripts:ro" -v "$ROOT/$dir/dist:/out" -w /home/pptruser \
+    "$PUPPETEER_IMAGE" sh -c "cp /scripts/webshot.cjs . && node webshot.cjs http://127.0.0.1:$port/ /out/webshot.png '$seconds' '$keys'" \
+    2>&1 | grep -vE 'GPU stall|Automatic fallback|ScriptProcessorNode' || status=1
+  [ -f "$ROOT/$dir/dist/webshot.png" ] && echo "$ROOT/$dir/dist/webshot.png"
+  return $status
+}
+
+cmd_relay() {
+  case "${1:-up}" in
+    up) docker compose up -d --build relay && say "relay on ws://localhost:${JUMPHP_RELAY_PORT:-8090}/ws" ;;
+    down) docker compose stop relay ;;
+    logs) docker compose logs -f relay ;;
+    *) die "relay up|down|logs" ;;
+  esac
+}
+
+cmd_export_desktop() {
+  local game="${1:-}"; local dir; dir="$(project_dir "$game")"
+  ensure_desktop_image
+  php_run "$dir" -- sh /workspace/tools/stage-web.sh "/workspace/$dir"
+  docker build -t "jumphp/game-$game" -f docker/desktop/Dockerfile.game --build-arg "BASE=$(runtime_image "$(project_dir "$game")")" ".build/$game"
+  say "image jumphp/game-$game. Run it with the same flags as bin/jumphp run (display + sound), e.g.:"
+  echo "  docker run --rm -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix jumphp/game-$game"
+}
+
+cmd_deploy() {
+  if [ -n "${JUMPHP_SERVER:-}" ]; then cmd_server_deploy "$@"; return; fi
+  local game="${1:-${JUMPHP_GAME:-}}"; local dir; dir="$(project_dir "$game")"
+  [ -n "${JUMPHP_DEPLOY_TARGET:-}" ] || die "no server: bin/jumphp deploy:setup (or JUMPHP_DEPLOY_TARGET in .env for a plain rsync)"
+  [ -f "$ROOT/$dir/dist/web/index.html" ] || die "no browser build: bin/jumphp build $game"
+  say "rsync $dir/dist/web -> $JUMPHP_DEPLOY_TARGET/$game/"
+  docker run --rm -v "$ROOT/$dir/dist/web:/src:ro" -v "${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent \
+    -v "$HOME/.ssh/known_hosts:/root/.ssh/known_hosts:ro" \
+    ${JUMPHP_DEPLOY_LOCAL:+-v "$JUMPHP_DEPLOY_TARGET:$JUMPHP_DEPLOY_TARGET"} \
+    instrumentisto/rsync-ssh rsync -az --delete /src/ "$JUMPHP_DEPLOY_TARGET/$game/"
+}
+
+server_dir() { echo "${JUMPHP_SERVER_DIR:-/opt/jumphp/${JUMPHP_GAME:-site}}"; }
+
+# Your server (bin/jumphp deploy:setup): the browser builds in site/ (one game at the root, several: a home page
+# + <game>/), the compose file of the mode (docker/server/<mode>), its .env; rsync, then docker compose up there.
+cmd_server_deploy() {
+  local target="$JUMPHP_SERVER" mode="${JUMPHP_SERVER_MODE:-frankenphp}" dir; dir="$(server_dir)"
+  [ -n "${JUMPHP_DOMAIN:-}" ] || die "JUMPHP_DOMAIN is empty: bin/jumphp deploy:setup"
+  [ -d "$ROOT/docker/server/$mode" ] || die "JUMPHP_SERVER_MODE: frankenphp, traefik, traefik-external or traefik-passthrough"
+  command -v rsync >/dev/null && command -v ssh >/dev/null || die "rsync and ssh are needed (bin/jumphp deploy:setup installs them)"
+  local games=("$@")
+  # shellcheck disable=SC2206
+  [ ${#games[@]} -gt 0 ] || games=(${JUMPHP_DEPLOY_GAMES:-${JUMPHP_GAME:-}})
+  [ ${#games[@]} -gt 0 ] || die "which game? bin/jumphp deploy <game> (or JUMPHP_GAME in .env)"
+
+  local out="$ROOT/.build/server"
+  rm -rf "$out" && mkdir -p "$out/site"
+  for game in "${games[@]}"; do project_dir "$game" >/dev/null; cmd_build "$game"; done
+  local pages="$ROOT/$(project_path "${games[0]}")/site"
+  if [ ${#games[@]} -eq 1 ] && [ -f "$pages/index.html" ]; then
+    assemble_site "${games[0]}" "$out/site" "$JUMPHP_DOMAIN"
+  elif [ ${#games[@]} -eq 1 ]; then
+    cp -r "$ROOT/$(project_path "${games[0]}")/dist/web/." "$out/site/"
+  else
+    for game in "${games[@]}"; do cp -r "$ROOT/$(project_path "$game")/dist/web" "$out/site/$game"; done
+    php_run . -- php tools/pages-index.php .build/server/site "" "${games[@]}"
+  fi
+  cp "$ROOT/docker/server/$mode/compose.yaml" "$out/compose.yaml"
+  # modes where FrankenPHP gets the certificate itself: the Caddyfile with the domain
+  if [ "$mode" = frankenphp ] || [ "$mode" = traefik-passthrough ]; then
+    # Caddy refuses an empty "email": without a Let's Encrypt address the line goes
+    if [ -n "${JUMPHP_ACME_EMAIL:-}" ]; then cp "$ROOT/docker/server/frankenphp/Caddyfile" "$out/Caddyfile"
+    else grep -v '^[[:space:]]*email {\$ACME_EMAIL}' "$ROOT/docker/server/frankenphp/Caddyfile" > "$out/Caddyfile"; fi
+  else cp "$ROOT/docker/web/Caddyfile" "$out/Caddyfile"; fi
+  local id; id="$(printf '%s' "${JUMPHP_GAME:-${games[0]}}" | tr -c 'a-z0-9\n' '-')"
+  cat > "$out/.env" <<ENV
+COMPOSE_PROJECT_NAME=jumphp-$id
+JUMPHP_ID=jumphp-$id
+JUMPHP_DOMAIN=$JUMPHP_DOMAIN
+JUMPHP_ACME_EMAIL=${JUMPHP_ACME_EMAIL:-}
+JUMPHP_WEB_IMAGE=$WEB_IMAGE
+JUMPHP_TRAEFIK_IMAGE=$TRAEFIK_IMAGE
+JUMPHP_TRAEFIK_NETWORK=${JUMPHP_TRAEFIK_NETWORK:-traefik}
+JUMPHP_TRAEFIK_ENTRYPOINT=${JUMPHP_TRAEFIK_ENTRYPOINT:-websecure}
+JUMPHP_TRAEFIK_HTTP_ENTRYPOINT=${JUMPHP_TRAEFIK_HTTP_ENTRYPOINT:-web}
+JUMPHP_TRAEFIK_RESOLVER=${JUMPHP_TRAEFIK_RESOLVER:-letsencrypt}
+ENV
+
+  say "sending ${games[*]} to $target:$dir ($mode)"
+  ssh -n "$target" "mkdir -p '$dir' 2>/dev/null || { sudo mkdir -p '$dir' && sudo chown \"\$(id -un)\" '$dir'; }" \
+    || die "ssh $target failed (bin/jumphp deploy:setup)"
+  local changed
+  changed="$(rsync -azc --delete -i "$out/" "$target:$dir/" | grep -E ' (compose\.yaml|Caddyfile|\.env)$' || true)"
+  local up="docker compose up -d --remove-orphans"
+  [ -z "$changed" ] || up="$up --force-recreate"     # a new configuration: restart the containers
+  ssh -n "$target" "cd '$dir' && $up" || die "docker compose failed on the server (Docker installed? bin/jumphp server:setup)"
+  check_online "$target" "$dir" "$mode"
+}
+
+# After a deploy: waits (2 min at most) for https://<domain>/ to answer with a valid certificate; otherwise shows why.
+check_online() {
+  local target="$1" dir="$2" mode="$3" url="https://$JUMPHP_DOMAIN/" i
+  command -v curl >/dev/null || { say "online: $url"; return 0; }
+  say "waiting for $url (the first time, the certificate is being issued)"
+  for i in $(seq 1 24); do
+    if curl -fsS -o /dev/null -m 10 -A jumphp-deploy "$url" 2>/dev/null; then say "online: $url"; return 0; fi
+    sleep 5
+  done
+  warn "$url does not answer with a valid certificate after 2 minutes. On the server:"
+  ssh -n "$target" "cd '$dir' && docker compose ps && docker compose logs --tail 15" || true
+  case "$mode" in
+    traefik-external) warn "behind a Traefik: are JUMPHP_TRAEFIK_ENTRYPOINT / _RESOLVER the ones of that Traefik?" \
+      "bin/jumphp server:traefik shows them; without a working resolver: JUMPHP_SERVER_MODE=traefik-passthrough" ;;
+    traefik-passthrough) warn "behind a Traefik: are JUMPHP_TRAEFIK_ENTRYPOINT (:443) and JUMPHP_TRAEFIK_HTTP_ENTRYPOINT (:80) the ones of that Traefik? (bin/jumphp server:traefik)" ;;
+    *) warn "does the DNS of $JUMPHP_DOMAIN point to the server, are its ports 80 and 443 open?" ;;
+  esac
+  return 1
+}
+
+# Docker on the server (Docker's official install script), the ssh user in the docker group.
+cmd_server_setup() {
+  [ -n "${JUMPHP_SERVER:-}" ] || die "no server: bin/jumphp deploy:setup"
+  say "installing Docker on $JUMPHP_SERVER"
+  ssh -t "$JUMPHP_SERVER" 'S=""; [ "$(id -u)" = 0 ] || S=sudo;
+    if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && $S sh /tmp/get-docker.sh; fi;
+    [ "$(id -u)" = 0 ] || $S usermod -aG docker "$(id -un)"; docker compose version || $S docker compose version'
+}
+
+cmd_server_logs() {
+  [ -n "${JUMPHP_SERVER:-}" ] || die "no server: bin/jumphp deploy:setup"
+  ssh -t "$JUMPHP_SERVER" "cd '$(server_dir)' && docker compose logs -f --tail 100"
+}
+
+# A Traefik already running on the server, as key=value lines (read by the wizard): its container, Docker network,
+# entry points on :80 (http=) and :443 (https=), the certificate resolver the other sites use (resolver=, empty:
+# none, so Traefik can not issue certificates: traefik-passthrough), and the mode to use (mode=).
+cmd_server_traefik() {
+  local target="${1:-${JUMPHP_SERVER:-}}"
+  [ -n "$target" ] || die "no server: bin/jumphp server:traefik user@host (or JUMPHP_SERVER in .env)"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" 'sh -s' <<'REMOTE'
+c="$(docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | awk '$2 ~ /traefik/ {print $1; exit}')"
+[ -n "$c" ] || { echo "traefik="; exit 0; }
+echo "traefik=$c"
+echo "network=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" | awk '{print $1}')"
+# the static configuration: command line arguments, then the mounted .toml / .yml files
+{ docker inspect -f '{{range .Args}}{{println .}}{{end}}' "$c"
+  for f in $(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c"); do
+    case "$f" in *.toml|*.yml|*.yaml) [ -f "$f" ] && cat "$f" ;; esac
+  done
+} | awk '
+  tolower($0) ~ /entrypoints\.[a-z0-9_-]+\.address/ {
+    s = $0; sub(/.*[eE]ntry[pP]oints\./, "", s); name = s; sub(/\..*/, "", name)
+    port = s; sub(/.*:/, "", port); gsub(/[^0-9]/, "", port); print port " " name; next }
+  tolower($0) ~ /^[ \t]*\[entrypoints\.[a-z0-9_-]+\]/ {
+    s = $0; sub(/.*[eE]ntry[pP]oints\./, "", s); sub(/\].*/, "", s); name = s; next }
+  /^[ \t]+[A-Za-z0-9_-]+:[ \t]*$/ { s = $0; gsub(/[ \t:]/, "", s); yname = s; next }
+  tolower($0) ~ /address/ && /:[0-9]+/ {
+    port = $0; sub(/.*:/, "", port); gsub(/[^0-9]/, "", port)
+    n = name != "" ? name : yname; if (n != "") print port " " n; name = "" }
+' | awk '$1 == 80 && !h {print "http=" $2; h = 1} $1 == 443 && !s {print "https=" $2; s = 1}'
+# a resolver is only trusted when another site uses it (a resolver can be declared and still not work)
+labels="$(docker ps -q | xargs -r docker inspect -f '{{range $k, $v := .Config.Labels}}{{$k}}={{$v}}{{println}}{{end}}')"
+resolver="$(printf '%s\n' "$labels" | sed -n 's/^traefik\.http\.routers\.[^.]*\.tls\.certresolver=//p' | sort | uniq -c | sort -rn | awk '{print $2; exit}')"
+echo "resolver=$resolver"
+if [ -n "$resolver" ]; then echo "mode=traefik-external"; else echo "mode=traefik-passthrough"; fi
+REMOTE
+}
+
+# Static site of several games on GitHub Pages: <site>/index.html + <site>/<game>/ (browser builds), pushed as
+# the only commit of the gh-pages branch (a deploy branch: its history is replaced each time).
+# JUMPHP_PAGES_REMOTE (origin) / JUMPHP_PAGES_BRANCH (gh-pages) change where it goes.
+cmd_pages() {
+  command -v git >/dev/null || die "git is needed on the host for bin/jumphp pages"
+  local remote="${JUMPHP_PAGES_REMOTE:-origin}" branch="${JUMPHP_PAGES_BRANCH:-gh-pages}" url
+  url="$(git -C "$ROOT" remote get-url "$remote" 2>/dev/null)" || die "no git remote '$remote' (git remote add $remote <url>)"
+  if [ "$remote" = origin ]; then project_github_repo >/dev/null || [[ ! "$url" =~ github\.com ]] || die "this project has no GitHub repository of its own (remote origin)"; fi
+  [ -f "$ENGINE_DIR/php-web.wasm" ] || die "no browser engine: bin/jumphp engine:build first (~25 min once)"
+  local games=("$@")
+  if [ ${#games[@]} -eq 0 ]; then
+    # desktop apps (ui: webview) have no browser build: not published
+    for d in "$ROOT"/games/*/ "$ROOT"/apps/*/; do [ -f "$(project_yaml "$d")" ] && ! is_app "$(basename "$d")" && ! is_cli "$(basename "$d")" && ! is_plugin "$(basename "$d")" && games+=("$(basename "$d")"); done
+  fi
+  [ ${#games[@]} -gt 0 ] || die "no game to publish"
+
+  local site="$ROOT/.build/pages"
+  rm -rf "$site" && mkdir -p "$site"
+  for game in "${games[@]}"; do
+    project_dir "$game" >/dev/null
+    cmd_build "$game"
+    cp -r "$ROOT/$(project_path "$game")/dist/web" "$site/$game"
+  done
+  touch "$site/.nojekyll"   # serve files as they are (no Jekyll processing)
+
+  # https address of the repository (git@github.com:owner/repo.git -> https://github.com/owner/repo)
+  local web; web="$(printf '%s' "$url" | sed -E 's#^git@([^:]+):#https://\1/#; s#\.git$##; s#^https://[^@/]+@#https://#')"
+  php_run . -- php tools/pages-index.php .build/pages "$web" "${games[@]}"
+
+  say "publishing ${games[*]} -> $remote $branch"
+  git -C "$site" init -q -b "$branch"
+  git -C "$site" add -A
+  git -C "$site" commit -q -m "Browser builds: ${games[*]} ($(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local))"
+  git -C "$site" push -q -f "$url" "$branch"
+  rm -rf "$site/.git"
+  if [[ "$web" =~ ^https://github\.com/([^/]+)/([^/]+)$ ]]; then
+    say "done: https://${BASH_REMATCH[1]}.github.io/${BASH_REMATCH[2]}/  (GitHub deploys it in ~1 min; first time: Settings > Pages > branch $branch)"
+  else
+    say "done: pushed to $remote $branch (a forge has no GitHub Pages: serve that branch yourself, or publish the game on the JumPHP playground: git push + sync_project, docs in AGENTS.md section 14)"
+  fi
+}
+
+cmd_lint() {
+  say "php -l (engine, skeletons, games)"
+  php_run . -- sh -c 'find engine/src engine/bootstrap engine/tests skeleton skeleton-app skeleton-gui games tools -name "*.php" -not -path "*/vendor/*" -not -path "*/.build/*" -print0 | xargs -0 -n1 php -l >/dev/null'
+  say "forbidden words"
+  bash tools/check-forbidden-words.sh
+  say "lint OK"
+}
+
+# A CI runner for a forge (git.jumphp.net: Forgejo Actions), all in Docker, with nothing of the host exposed:
+# its own Docker daemon (dind) runs the jobs, the host's docker.sock is never mounted, and the registration token is
+# scoped to ONE organization or user (never the whole instance: anyone could then run code on this machine).
+#   bin/jumphp runner:install --scope org/jumphp [--forge https://git.jumphp.net] [--name pc] [--labels ubuntu-latest:docker://node:20-bookworm]
+# The registration token: JUMPHP_RUNNER_TOKEN, or made through the API with your forge token (JUMPHP_FORGE_TOKEN / git credentials).
+# Files: ~/.jumphp/runners/<name>/ (compose.yaml, data/); stop and remove: runner:remove --name <name>.
+cmd_runner_install() {
+  command -v docker >/dev/null || die "docker is needed"
+  local forge="${JUMPHP_FORGE_URL:-https://git.jumphp.net}" scope="" name="runner-$(hostname -s)" labels="ubuntu-latest:docker://node:20-bookworm,ubuntu-22.04:docker://node:20-bookworm" capacity=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --forge) forge="${2:?}"; shift ;; --scope) scope="${2:?}"; shift ;; --name) name="${2:?}"; shift ;;
+      --labels) labels="${2:?}"; shift ;; --capacity) capacity="${2:?}"; shift ;;
+      *) die "runner:install: unknown option $1" ;;
+    esac
+    shift
+  done
+  [[ "$scope" =~ ^(org|user)/[A-Za-z0-9._-]+$ ]] || die "runner:install --scope org/<name> or user/<name>: the runner serves ONE organization or user (never the whole instance)"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "runner name: letters, digits . _ -"
+  local kind="${scope%%/*}" owner="${scope#*/}" host="${forge#https://}" token="${JUMPHP_RUNNER_TOKEN:-}"
+  if [ -z "$token" ]; then
+    local api="$forge/api/v1"
+    local ft="${JUMPHP_FORGE_TOKEN:-$(printf 'protocol=https\nhost=%s\n\n' "$host" | git credential fill 2>/dev/null | sed -n 's/^password=//p')}"
+    [ -n "$ft" ] || die "no token for $host: set JUMPHP_RUNNER_TOKEN (Settings > Actions > Runners > Create new runner), or JUMPHP_FORGE_TOKEN"
+    local path; [ "$kind" = org ] && path="orgs/$owner/actions/runners/registration-token" || path="user/actions/runners/registration-token"
+    token="$(curl -fsSL -H "Authorization: token $ft" "$api/$path" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    [ -n "$token" ] || die "could not get a registration token for $scope on $host (your token needs write access to it)"
+  fi
+  local dir="${JUMPHP_HOME:-$HOME/.jumphp}/runners/$name"
+  mkdir -p "$dir/data" && chmod 700 "$dir"
+  cat > "$dir/compose.yaml" <<YAML
+# Forgejo Actions runner "$name" for $scope on $forge (bin/jumphp runner:install). Jobs run in their own Docker daemon.
+name: jumphp-runner-$name
+services:
+  dind:
+    image: docker:27-dind
+    restart: unless-stopped
+    privileged: true            # the dind daemon only: jobs never get the host's docker.sock
+    environment: { DOCKER_TLS_CERTDIR: "" }
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false"]
+    networks: [ci]
+    volumes: [dind:/var/lib/docker]
+  runner:
+    image: code.forgejo.org/forgejo/runner:13
+    restart: unless-stopped
+    user: "0:0"
+    working_dir: /data
+    depends_on: [dind]
+    environment: { DOCKER_HOST: "tcp://dind:2375" }
+    command: forgejo-runner daemon --config config.yml
+    networks: [ci]
+    volumes: [./data:/data]
+networks: { ci: {} }
+volumes: { dind: {} }
+YAML
+  say "registering the runner $name for $scope on $forge"
+  docker run --rm -v "$dir/data:/data" -w /data code.forgejo.org/forgejo/runner:13 sh -c \
+    "forgejo-runner register --no-interactive --instance '$forge' --token '$token' --name '$name' --labels '$labels' >/dev/null && forgejo-runner generate-config > config.yml" || die "registration failed"
+  sed -i "s/^  capacity: 1/  capacity: $capacity/" "$dir/data/config.yml" 2>/dev/null || true
+  docker compose -f "$dir/compose.yaml" up -d
+  say "runner $name is up ($dir). Remove it: bin/jumphp runner:remove --name $name"
+}
+
+cmd_runner_remove() {
+  local name="runner-$(hostname -s)"
+  while [ $# -gt 0 ]; do case "$1" in --name) name="${2:?}"; shift ;; *) die "runner:remove: unknown option $1" ;; esac; shift; done
+  local dir="${JUMPHP_HOME:-$HOME/.jumphp}/runners/$name"
+  [ -f "$dir/compose.yaml" ] || die "no runner $name ($dir)"
+  docker compose -f "$dir/compose.yaml" down -v
+  rm -rf "$dir"
+  say "runner $name removed (delete it in the forge's Settings > Actions > Runners too)"
+}
+
+# The runner install scripts of tools/runner/ (install-windows-runner.ps1, install-wsl-linux-runner.ps1, windows-vm/):
+# print where they are, or copy them to a folder (a USB stick, a Windows machine that has no checkout). docs/ci-runner.md
+cmd_runner_scripts() {
+  [ -d "$ROOT/tools/runner" ] || die "tools/runner/ not found in $ROOT"
+  if [ -z "${1:-}" ]; then echo "$ROOT/tools/runner"; ls "$ROOT/tools/runner"; return; fi
+  mkdir -p "$1" && cp -R "$ROOT/tools/runner/." "$1/" && say "scripts copied to $1 (see docs/ci-runner.md)"
+}
+
+cmd_doctor() {
+  docker version --format 'docker {{.Server.Version}}' || die "docker is not running"
+  docker image inspect "$DESKTOP_IMAGE" >/dev/null 2>&1 && echo "desktop image: ok" || echo "desktop image: missing (bin/jumphp setup)"
+  [ -f "$ENGINE_DIR/php-web.wasm" ] && echo "wasm engine: ok ($ENGINE_DIR)" || echo "wasm engine: missing (bin/jumphp engine:build)"
+  echo "display: DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+  local xdg="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  [ -S "$xdg/pulse/native" ] && echo "sound: ok ($xdg/pulse/native)" || echo "sound: no PulseAudio/PipeWire socket (games run silent)"
+  [ -d /dev/dri ] && echo "gpu: /dev/dri" || echo "gpu: none (software rendering)"
+}
+
+# desktop apps (Tauri): app:* and tauri:* (docs/tauri.md)
+# shellcheck source=../tools/app-commands.sh
+. "$ROOT/tools/app-commands.sh"
+# CLI apps (kind: cli): cli:new, and run / test / shot / export:standalone of their folders (docs/cli.md)
+# shellcheck source=../tools/cli-commands.sh
+. "$ROOT/tools/cli-commands.sh"
+# IDE plugins (kind: plugin): plugin:new, plugin:pack, and test of their folders (docs/ide-plugins.md)
+# shellcheck source=../tools/plugin-commands.sh
+. "$ROOT/tools/plugin-commands.sh"
+# shellcheck source=../tools/extension-commands.sh
+. "$ROOT/tools/extension-commands.sh"
+
+# shellcheck source=../tools/video-make-commands.sh
+. "$ROOT/tools/video-make-commands.sh"
+
+# shellcheck source=../tools/service-commands.sh
+. "$ROOT/tools/service-commands.sh"
+
+# Docker must answer before anything runs in it: else every command hangs or fails with Docker's own words (the IDE
+# showed a composer install that never ended). Docker Desktop (Windows, macOS) is started when it is installed but
+# not running, and waited for; Linux says how to start the service. Once per run.
+ensure_docker_running() {
+  [ -n "${JUMPHP_DOCKER_OK:-}" ] && return 0
+  command -v docker >/dev/null 2>&1 || die "Docker is needed and was not found: https://docs.docker.com/get-docker/ (then bin/jumphp init)"
+  # a Docker Desktop that is starting (or stuck) can keep `docker info` waiting forever: 20 s at most each time
+  docker_answers() { if command -v timeout >/dev/null 2>&1; then timeout 20 docker info >/dev/null 2>&1; else docker info >/dev/null 2>&1; fi; }
+  if ! docker_answers; then
+    local started=""
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        local exe
+        for exe in "${ProgramW6432:-/c/Program Files}/Docker/Docker/Docker Desktop.exe" "/c/Program Files/Docker/Docker/Docker Desktop.exe"; do
+          exe="$(cygpath -u "$exe" 2>/dev/null || echo "$exe")"
+          if [ -f "$exe" ]; then say "Docker is not running: starting Docker Desktop (it takes up to a minute)"; "$exe" >/dev/null 2>&1 & started=1; break; fi
+        done ;;
+      Darwin)
+        open -a Docker >/dev/null 2>&1 && { say "Docker is not running: starting Docker Desktop (it takes up to a minute)"; started=1; } ;;
+    esac
+    if [ -n "$started" ]; then
+      local i
+      for i in $(seq 1 45); do docker_answers && break; sleep 2; done
+    fi
+    if ! docker_answers; then
+      case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*|Darwin) die "Docker does not answer: start Docker Desktop (and wait until it says it is running), then try again" ;;
+        *) docker info 2>&1 | grep -qi 'permission denied' \
+             && die "Docker refuses this user: add it to the docker group (sudo usermod -aG docker \$USER), log in again, then try again" \
+             || die "Docker does not answer: start it (sudo systemctl start docker), then try again" ;;
+      esac
+    fi
+  fi
+  export JUMPHP_DOCKER_OK=1
+}
+
+main() {
+  # `bin/jumphp` alone in a project without a game yet (composer create-project, fresh clone): the wizard
+  if [ $# -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ -z "${JUMPHP_GAME:-}" ]; then
+    exec bash "$ROOT/tools/init.sh"
+  fi
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    help|-h|--help|init|deploy:setup|github|update|forge:migrate|cli:install|cli:uninstall|server:*) ;;
+    *) ensure_docker_running ;;
+  esac
+  case "$cmd" in
+    init) exec bash "$ROOT/tools/init.sh" "$@" ;;
+    deploy:setup) exec bash "$ROOT/tools/init.sh" --deploy ;;
+    github) exec bash "$ROOT/tools/init.sh" --github ;;
+    server:setup) cmd_server_setup ;;
+    server:logs) cmd_server_logs ;;
+    server:traefik) cmd_server_traefik "$@" ;;
+    update) cmd_update ;;
+    forge:migrate) exec python3 "$ROOT/tools/forge-migrate.py" --root "$ROOT" "$@" ;;
+    cli:install) cmd_cli_install ;;
+    cli:uninstall) cmd_cli_uninstall ;;
+    engine:download) cmd_engine_download "$@" ;;
+    engine:pack) cmd_engine_pack ;;
+    runtime:build) cmd_runtime_build ;;
+    ssh:build) cmd_ssh_build ;;
+    runtime:download) cmd_runtime_download "$@" ;;
+    setup) cmd_setup "$@" ;;
+    engine:build) cmd_engine_build "$@" ;;
+    new) cmd_new "$@" ;;
+    gui:new) cmd_gui_new "$@" ;;
+    video) cmd_video "$@" ;;
+    install) local d; d="$(project_dir "${1:-}")"; php_run "$d" -- composer install --no-interaction ;;
+    composer) local d; d="$(project_dir "${1:-}")"; shift; php_run "$d" -- composer "$@" ;;
+    run) cmd_run "$@" ;;
+    test) cmd_test "$@" ;;
+    shot) cmd_shot "$@" ;;
+    build) cmd_build "$@" ;;
+    build:remote) cmd_build_remote "$@" ;;
+    build:site) cmd_build_site "$@" ;;
+    siteshot) cmd_siteshot "$@" ;;
+    site:new) cmd_site_new "$@" ;;
+    serve) cmd_serve "$@" ;;
+    webshot) cmd_webshot "$@" ;;
+    relay) cmd_relay "$@" ;;
+    export:desktop) cmd_export_desktop "$@" ;;
+    export:standalone) cmd_export_standalone "$@" ;;
+    installer) cmd_installer "$@" ;;
+    twa) cmd_twa "$@" ;;
+    android) cmd_android "$@" ;;
+    apple) cmd_apple "$@" ;;
+    ios) local g="${1:-}"; shift || true; cmd_apple "$g" --ios "$@" ;;
+    macos) local g="${1:-}"; shift || true; cmd_apple "$g" --macos "$@" ;;
+    deploy) cmd_deploy "$@" ;;
+    pages) cmd_pages "$@" ;;
+    tauri:setup) cmd_tauri_setup ;;
+    tauri:build) cmd_tauri_build ;;
+    tauri:download) cmd_tauri_download "$@" ;;
+    app:new) cmd_app_new "$@" ;;
+    cli:new) cmd_cli_new "$@" ;;
+    plugin:new) cmd_plugin_new "$@" ;;
+    service:install|service:uninstall|service:status|service:logs|service:start|service:stop|service:print) cmd_service "${cmd#service:}" "$@" ;;
+    plugin:pack) cmd_plugin_pack "$@" ;;
+    extension:new) cmd_extension_new "$@" ;;
+    extension:add) cmd_extension_add "$@" ;;
+    extension:remove) cmd_extension_remove "$@" ;;
+    video:make) cmd_video_make "$@" ;;
+    video:replay) cmd_video_replay "$@" ;;
+    tidy) cmd_tidy "$@" ;;
+    debug) cmd_debug "$@" ;;
+    app:run) cmd_app_run "$@" ;;
+    app:test) cmd_app_test "$@" ;;
+    app:shot) cmd_app_shot "$@" ;;
+    app:export) cmd_app_export "$@" ;;
+    ide) cmd_ide "$@" ;;
+    claude:connect) cmd_claude_connect "$@" ;;
+    app:release) cmd_app_release "$@" ;;
+    lint) cmd_lint ;;
+    doctor) cmd_doctor ;;
+    runner:install) cmd_runner_install "$@" ;;
+    runner:remove) cmd_runner_remove "$@" ;;
+    runner:scripts) cmd_runner_scripts "$@" ;;
+    php) local d="${1:-.}"; shift || true; php_run "$d" -- php "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage; die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"

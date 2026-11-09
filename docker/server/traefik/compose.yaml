@@ -1,0 +1,48 @@
+# Traefik (HTTPS, Let's Encrypt, HTTP -> HTTPS) in front of FrankenPHP serving the games. bin/jumphp deploy.
+# Other sites can join later: put them on the network "jumphp-traefik" with the same kind of labels.
+services:
+  traefik:
+    image: ${JUMPHP_TRAEFIK_IMAGE}
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=jumphp-traefik
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${JUMPHP_ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks: [traefik]
+  web:
+    image: ${JUMPHP_WEB_IMAGE}
+    restart: unless-stopped
+    volumes:
+      - ./site:/srv:ro
+      - ./Caddyfile:/etc/frankenphp/Caddyfile:ro
+    # the image's own check asks Caddy's admin API, which this Caddyfile turns off: Traefik skips unhealthy containers
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      start_period: 3s
+    networks: [traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${JUMPHP_ID}.rule=Host(`${JUMPHP_DOMAIN}`)
+      - traefik.http.routers.${JUMPHP_ID}.entrypoints=websecure
+      - traefik.http.routers.${JUMPHP_ID}.tls.certresolver=letsencrypt
+      - traefik.http.services.${JUMPHP_ID}.loadbalancer.server.port=80
+volumes:
+  letsencrypt:
+networks:
+  traefik:
+    name: jumphp-traefik

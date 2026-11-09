@@ -1,0 +1,35 @@
+# FrankenPHP behind a Traefik already running on the server that only forwards the traffic: TLS passes through
+# (TCP router), FrankenPHP gets its own certificate from Let's Encrypt (HTTP challenge through Traefik's port 80
+# entry point). For a Traefik without a working certificate resolver. bin/jumphp deploy.
+services:
+  web:
+    image: ${JUMPHP_WEB_IMAGE}
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: ${JUMPHP_DOMAIN}
+      ACME_EMAIL: ${JUMPHP_ACME_EMAIL}
+    volumes:
+      - ./site:/srv:ro
+      - ./Caddyfile:/etc/frankenphp/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${JUMPHP_TRAEFIK_NETWORK}
+      - traefik.http.routers.${JUMPHP_ID}-http.rule=Host(`${JUMPHP_DOMAIN}`)
+      - traefik.http.routers.${JUMPHP_ID}-http.entrypoints=${JUMPHP_TRAEFIK_HTTP_ENTRYPOINT}
+      - traefik.http.routers.${JUMPHP_ID}-http.service=${JUMPHP_ID}-http
+      - traefik.http.services.${JUMPHP_ID}-http.loadbalancer.server.port=80
+      - traefik.tcp.routers.${JUMPHP_ID}-tls.rule=HostSNI(`${JUMPHP_DOMAIN}`)
+      - traefik.tcp.routers.${JUMPHP_ID}-tls.entrypoints=${JUMPHP_TRAEFIK_ENTRYPOINT}
+      - traefik.tcp.routers.${JUMPHP_ID}-tls.service=${JUMPHP_ID}-tls
+      - traefik.tcp.routers.${JUMPHP_ID}-tls.tls.passthrough=true
+      - traefik.tcp.services.${JUMPHP_ID}-tls.loadbalancer.server.port=443
+networks:
+  traefik:
+    name: ${JUMPHP_TRAEFIK_NETWORK}
+    external: true
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# `gh` for JumPHP projects: the same command whether the project lives on GitHub or on git.jumphp.net.
+# - GitHub (or no remote): the real GitHub CLI, untouched.
+# - another forge (git.jumphp.net, Forgejo/Gitea API): tools/forge.php, the subset of gh that JumPHP uses
+#   (release create|view|list|upload|download|edit|delete, run list|view|watch|download, workflow run|list,
+#    repo create|view, secret set|list, auth status|login, api).
+# bin/jumphp, tools/init.sh and the IDE put this folder first in PATH, so every `gh ...` of a script ends here.
+# Which forge: GH_HOST, a host in -R / --repo (host/owner/name), else the host of this folder's git remote `origin`.
+# The token: JUMPHP_FORGE_TOKEN, else the one git already has for that host (git credential helper), else `gh auth login`.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+host="${GH_HOST:-}"
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -R|--repo) v="${args[$((i + 1))]:-}" ;;
+    --repo=*) v="${args[$i]#--repo=}" ;;
+    *) continue ;;
+  esac
+  [[ "$v" == */*/* ]] && host="${v%%/*}"
+done
+if [ -z "$host" ]; then
+  url="$(git remote get-url origin 2>/dev/null || true)"
+  host="$(printf '%s' "$url" | sed -E 's#^[a-z+]+://([^@/]*@)?([^/:]+)[:/].*#\2#; s#^[^@]*@([^:]+):.*#\1#')"
+  [ "$host" = "$url" ] && host=""
+fi
+# the real gh: the first one in PATH that is not this script
+real=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  [ -x "$d/gh" ] && [ "$(cd "$d" && pwd)" != "$here" ] && { real="$d/gh"; break; }
+done
+if [ -z "$host" ] || [ "$host" = "github.com" ] || [[ "$host" == *.github.com ]]; then
+  [ -n "$real" ] || { echo "gh (GitHub's command) is needed for GitHub projects: https://cli.github.com" >&2; exit 127; }
+  exec "$real" "$@"
+fi
+export FORGE_HOST="$host"
+[ -n "${url:-}" ] && export FORGE_REPO="${FORGE_REPO:-$(printf '%s' "$url" | sed -E 's#^.*[:/]([^/:]+/[^/]+)$#\1#; s#\.git$##')}"
+if command -v php >/dev/null 2>&1 && php -r 'exit(PHP_VERSION_ID >= 80100 ? 0 : 1);' 2>/dev/null; then
+  exec php "$here/../forge.php" "$@"
+fi
+command -v docker >/dev/null 2>&1 || { echo "gh for $host needs PHP 8.1+ or Docker" >&2; exit 127; }
+exec docker run --rm -i ${FORGE_TTY:+-t} --user "$(id -u):$(id -g)" -e HOME=/tmp -e FORGE_HOST -e JUMPHP_FORGE_TOKEN -e GH_HOST \
+  -v "$PWD:$PWD" -v "$here/..:$here/..:ro" ${HOME:+-v "$HOME/.git-credentials:/tmp/.git-credentials:ro"} -w "$PWD" \
+  "${JUMPHP_FORGE_IMAGE:-php:8.3-cli-alpine}" php "$here/../forge.php" "$@"

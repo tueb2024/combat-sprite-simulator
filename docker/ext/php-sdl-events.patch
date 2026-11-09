@@ -1,0 +1,70 @@
+diff --git a/src/event.c b/src/event.c
+index 29fa842..c0e2e38 100644
+--- a/src/event.c
++++ b/src/event.c
+@@ -70,6 +70,7 @@ zend_bool sdl_event_to_zval(SDL_Event *event, zval *value)
+ 	}
+ 	break;
+ 	case SDL_MOUSEBUTTONDOWN:
++	case SDL_MOUSEBUTTONUP:
+ 	{
+ 		zval button;
+ 		object_init(&button);
+@@ -80,6 +81,47 @@ zend_bool sdl_event_to_zval(SDL_Event *event, zval *value)
+ 		zval_ptr_dtor(&button);
+ 	}
+ 	break;
++	case SDL_MOUSEWHEEL:
++	{
++		/* JumPHP: the wheel (x / y in notches, flipped when the system says so; precise: fractions of notches) */
++		zval wheel;
++		int flip = event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1;
++		object_init(&wheel);
++		add_property_long(&wheel, "x", event->wheel.x * flip);
++		add_property_long(&wheel, "y", event->wheel.y * flip);
++#if SDL_VERSION_ATLEAST(2, 0, 18)
++		add_property_double(&wheel, "preciseX", event->wheel.preciseX * flip);
++		add_property_double(&wheel, "preciseY", event->wheel.preciseY * flip);
++#else
++		add_property_double(&wheel, "preciseX", (double)(event->wheel.x * flip));
++		add_property_double(&wheel, "preciseY", (double)(event->wheel.y * flip));
++#endif
++		add_property_zval(value, "wheel", &wheel);
++		zval_ptr_dtor(&wheel);
++	}
++	break;
++	case SDL_TEXTINPUT:
++	{
++		/* JumPHP: typed text in UTF-8 (dead keys and input methods already composed) */
++		zval text;
++		object_init(&text);
++		add_property_string(&text, "text", event->text.text);
++		add_property_zval(value, "text", &text);
++		zval_ptr_dtor(&text);
++	}
++	break;
++	case SDL_TEXTEDITING:
++	{
++		/* JumPHP: the text an input method is composing, not typed yet */
++		zval edit;
++		object_init(&edit);
++		add_property_string(&edit, "text", event->edit.text);
++		add_property_long(&edit, "start", event->edit.start);
++		add_property_long(&edit, "length", event->edit.length);
++		add_property_zval(value, "edit", &edit);
++		zval_ptr_dtor(&edit);
++	}
++	break;
+ 	case SDL_KEYDOWN:
+ 	case SDL_KEYUP:
+ 	{
+@@ -305,6 +347,9 @@ PHP_MINIT_FUNCTION(sdl_event)
+ 	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("motion"), ZEND_ACC_PUBLIC);
+ 	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("window"), ZEND_ACC_PUBLIC);
+ 	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("button"), ZEND_ACC_PUBLIC);
++	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("wheel"), ZEND_ACC_PUBLIC);
++	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("text"), ZEND_ACC_PUBLIC);
++	zend_declare_property_null(php_sdl_event_ce, ZEND_STRL("edit"), ZEND_ACC_PUBLIC);
+ 
+ 
+ 	// touchpad

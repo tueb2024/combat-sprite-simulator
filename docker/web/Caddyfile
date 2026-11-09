@@ -1,0 +1,17 @@
+# FrankenPHP server for a browser build (bin/jumphp serve / webshot; deploy behind Traefik: plain HTTP).
+# The game itself is static (PHP runs in the player's browser, compiled to WebAssembly): any static host
+# works the same way (no special headers: the engine uses no threads, so no COOP/COEP). FrankenPHP is used
+# so that server-side PHP (the future games portal: accounts, scores...) can be added here with `php_server`.
+{
+	frankenphp
+	auto_https off
+	admin off
+}
+
+:80 {
+	root * /srv
+	encode zstd gzip
+	file_server
+	header /version.json Cache-Control "no-store"
+	header /index.html Cache-Control "no-cache"
+}
