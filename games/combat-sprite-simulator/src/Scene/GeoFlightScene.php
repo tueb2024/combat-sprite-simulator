@@ -138,9 +138,13 @@ final class GeoFlightScene extends AbstractScene
         $cameraY = $this->planeY - self::PLANE_Y;
         $this->tiles?->draw($r, $cameraX, $cameraY, $this->width(), $this->height());
 
-        // Simulated 15 m altitude, high afternoon sun. World-pinned, not part of the aircraft sprite.
-        $shadowX = self::PLANE_X + self::ALTITUDE_M * 1.4;
-        $shadowY = self::PLANE_Y + self::ALTITUDE_M * 1.7;
+        // Simulated 15 m altitude, 68-degree sun and NW light: projected in
+        // metres first, then map pixels. Shadow tracks the world, not a UI offset.
+        $shadowLength = self::ALTITUDE_M / tan(deg2rad(68))
+            / GeoProjection::metersPerPixel($this->latitude);
+        $shadowBearing = deg2rad(315 + 180); // Opposite the sunlight (NW -> SE).
+        $shadowX = self::PLANE_X + sin($shadowBearing) * $shadowLength;
+        $shadowY = self::PLANE_Y - cos($shadowBearing) * $shadowLength;
         if ($this->shadowTexture !== null) {
             $r->copy($this->shadowTexture, null, $shadowX - 27, $shadowY - 27, 54, 54);
         }
