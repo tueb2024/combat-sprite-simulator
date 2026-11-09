@@ -13,8 +13,8 @@ final class TitleScene extends MenuScene
     public function enter(array $params = []): void
     {
         parent::enter($params);
-        // Address search comes from the game's site HTML, through the official
-        // JumPHP bridge. Dispatch only while the title menu owns the screen.
+        // Backward compatibility with the optional site: address lookup also
+        // works directly inside the game via AddressEntryScene.
         $this->flightListener = function (array $event): void {
             if ($this->scenes()->current() !== $this) {
                 return;
@@ -39,6 +39,7 @@ final class TitleScene extends MenuScene
     {
         return [
             ['START MISSION', null, fn () => $this->scenes()->switchTo(PlayScene::class)],
+            ['SURVOL A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class)],
             ['SURVOL LIBRE', null, fn () => $this->scenes()->switchTo(GeoFlightScene::class)],
         ];
     }
