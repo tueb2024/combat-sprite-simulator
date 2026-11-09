@@ -11,8 +11,18 @@ final class AircraftShadow
      * Central atlas frame: middle bank (row 1), middle propeller state (col 1).
      * Works with both the original and the Blender-refined Hurricane atlas.
      */
-    public static function create(Sdl $sdl, string $atlasPath, int $frameSize = 256, int $size = 64)
+    public static function create(
+        Sdl $sdl,
+        string $atlasPath,
+        int $frameSize = 256,
+        int $size = 64,
+        string $textureName = 'css-flight-shadow',
+        int $column = 1,
+        int $row = 1,
+        ?int $frameHeight = null,
+    )
     {
+        $frameHeight ??= $frameSize;
         $atlas = @imagecreatefrompng($atlasPath);
         if (!$atlas) {
             return null;
@@ -20,8 +30,8 @@ final class AircraftShadow
         $sample = imagecreatetruecolor($size, $size);
         imagealphablending($sample, false);
         imagesavealpha($sample, true);
-        imagecopyresampled($sample, $atlas, 0, 0, $frameSize, $frameSize,
-            $size, $size, $frameSize, $frameSize);
+        imagecopyresampled($sample, $atlas, 0, 0, $column * $frameSize, $row * $frameHeight,
+            $size, $size, $frameSize, $frameHeight);
         imagedestroy($atlas);
 
         $shadow = imagecreatetruecolor($size, $size);
@@ -41,7 +51,7 @@ final class AircraftShadow
             }
         }
         imagedestroy($sample);
-        $texture = $sdl->createTextureFromGd('css-flight-shadow', $shadow)[0]['texture'];
+        $texture = $sdl->createTextureFromGd($textureName, $shadow)[0]['texture'];
         imagedestroy($shadow);
         return $texture;
     }

@@ -4,6 +4,10 @@ namespace App\Scene;
 
 use App\Entity\Hitbox;
 use App\Entity\EnemyProfile;
+use App\Geo\AddressLookup;
+use App\Geo\AircraftShadow;
+use App\Geo\MissionTerrain;
+use App\Geo\OrthoTileManager;
 use JumPHP\Renderer\Renderer;
 use JumPHP\Scene\AbstractScene;
 
@@ -35,8 +39,36 @@ final class PlayScene extends AbstractScene
     private $ju87Tex = null;
     private $groundTex = null;
 
+    private ?MissionTerrain $missionTerrain = null;
+    private ?OrthoTileManager $missionTiles = null;
+    private string $missionAddress = '';
+    private string $geoState = 'none';
+    private string $geoMessage = '';
+    private float $geoElapsed = 0.0;
+    private int $geoGeneration = 0;
+    private $playerShadowTex = null;
+    private $bf109ShadowTex = null;
+    private $ju87ShadowTex = null;
+    private $bossShadowTex = null;
+    private $siteMissionListener = null;
+
     public function enter(array $params = []): void
     {
+        // A restart can call enter() without a scene exit: avoid duplicate handlers.
+        if ($this->siteMissionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->siteMissionListener);
+            $this->siteMissionListener = null;
+        }
+        // Cancel outstanding geocoding and tile responses from previous missions.
+        ++$this->geoGeneration;
+        $this->missionTiles?->stop();
+        $this->missionTiles = null;
+        $this->missionTerrain = null;
+        $this->geoElapsed = 0;
+        $this->missionAddress = trim((string) ($params['address'] ?? ''));
+        $this->geoState = $this->missionAddress === '' ? 'none' : 'search';
+        $this->geoMessage = '';
+        $this->releaseShadows();
         $this->time = $this->scroll = $this->fireDelay = $this->spawnDelay = $this->bossDelay = 0;
         $this->x = 160;
         $this->y = 405;
@@ -74,18 +106,169 @@ final class PlayScene extends AbstractScene
         $this->bf109Tex = $this->sdl()->getTexture('combat-bf109')['texture'];
         $this->ju87Tex = $this->sdl()->getTexture('combat-ju87')['texture'];
         $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
+
+        $this->siteMissionListener = function (array $event): void {
+            if ($this->scenes()->current() !== $this) {
+                return;
+            }
+            $address = trim((string) ($event['address'] ?? ''));
+            if ($address !== '') {
+                $this->enter(['address' => $address]);
+            }
+        };
+        $this->engine->bridge->on('mission-at-address', $this->siteMissionListener);
+
+        if ($this->missionAddress !== '') {
+            if (isset($params['latitude'], $params['longitude'])
+                && is_numeric($params['latitude']) && is_numeric($params['longitude'])) {
+                // Pre-resolved coordinates: used on restart and in deterministic tests.
+                $this->startAtCoordinates(
+                    (float) $params['latitude'], (float) $params['longitude'],
+                    (string) ($params['label'] ?? $this->missionAddress)
+                );
+            } else {
+                $generation = $this->geoGeneration;
+                (new AddressLookup($this->engine->http()))->search(
+                    $this->missionAddress,
+                    function (float $lat, float $lon, string $label) use ($generation): void {
+                        if ($generation === $this->geoGeneration) {
+                            $this->startAtCoordinates($lat, $lon, $label);
+                        }
+                    },
+                    function (string $message) use ($generation): void {
+                        if ($generation === $this->geoGeneration) {
+                            $this->geoState = 'error';
+                            $this->geoMessage = $message;
+                        }
+                    }
+                );
+            }
+        }
+    }
+
+    public function exit(): void
+    {
+        if ($this->siteMissionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->siteMissionListener);
+            $this->siteMissionListener = null;
+        }
+        ++$this->geoGeneration;
+        $this->missionTiles?->stop();
+        $this->missionTiles = null;
+        $this->releaseShadows();
+    }
+
+    private function startAtCoordinates(float $lat, float $lon, string $label): void
+    {
+        if ($lat < 41.0 || $lat > 51.5 || $lon < -6.0 || $lon > 10.0) {
+            $this->geoState = 'error';
+            $this->geoMessage = 'Adresse hors de France metropolitaine';
+            return;
+        }
+        $this->missionTiles?->stop();
+        $this->missionTerrain = new MissionTerrain($lat, $lon, $label);
+        $this->missionTiles = new OrthoTileManager($this->engine->http(), $this->sdl());
+        $this->geoElapsed = 0.0;
+        $this->geoState = 'loading';
+        $this->geoMessage = 'Chargement des photographies IGN';
+        $this->createShadows();
+    }
+
+    private function createShadows(): void
+    {
+        $this->releaseShadows();
+        $this->playerShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/hurricane-mk1-atlas.png'),
+            512, 64, 'mission-shadow-hurricane');
+        $this->bf109ShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/bf109-e4-atlas.png'),
+            512, 64, 'mission-shadow-bf109');
+        $this->ju87ShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/ju87-b2-atlas.png'),
+            512, 64, 'mission-shadow-ju87');
+        $this->bossShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/junkers-atlas.png'),
+            512, 64, 'mission-shadow-boss', 0, 0, 256);
+    }
+
+    private function releaseShadows(): void
+    {
+        foreach (['mission-shadow-hurricane', 'mission-shadow-bf109',
+            'mission-shadow-ju87', 'mission-shadow-boss'] as $name) {
+            if ($this->sdl()->hasTexture($name)) {
+                $this->sdl()->releaseTexture($name);
+            }
+        }
+        $this->playerShadowTex = $this->bf109ShadowTex = null;
+        $this->ju87ShadowTex = $this->bossShadowTex = null;
+    }
+
+    /** Refresh tile requests while the level scrolls through the same real-world area. */
+    private function updateTerrainTiles(): void
+    {
+        if ($this->missionTerrain === null || $this->missionTiles === null) {
+            return;
+        }
+        [$cameraX, $cameraY] = $this->missionTerrain->camera($this->scroll);
+        $this->missionTiles->tick($cameraX, $cameraY, $this->width(),
+            $this->height(), $this->geoElapsed);
     }
 
     public function update(float $dt): void
     {
+        // Reopen the same native address field while keeping combat and map modes separate.
+        if ($this->actions()->isPressed('search_address')) {
+            $this->scenes()->switchTo(AddressEntryScene::class,
+                ['purpose' => 'mission', 'address' => $this->missionAddress], false);
+            return;
+        }
+        if ($this->geoState === 'error') {
+            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('back')) {
+                $this->scenes()->switchTo(AddressEntryScene::class,
+                    ['purpose' => 'mission', 'address' => $this->missionAddress], false);
+            }
+            return;
+        }
+        if ($this->geoState === 'search' || $this->geoState === 'loading') {
+            $this->geoElapsed += $dt;
+            if ($this->geoState === 'loading') {
+                $this->updateTerrainTiles();
+                if (($this->missionTiles?->readyCount() ?? 0) >= 2) {
+                    $this->geoState = 'ready';
+                    $this->geoMessage = '';
+                } elseif ($this->geoElapsed >= 12.0) {
+                    // Never pretend a cached demonstration image is the chosen address.
+                    // Keep the game playable with a persistent explicit warning.
+                    $this->geoState = 'fallback';
+                    $this->geoMessage = 'IGN INDISPONIBLE - F POUR CHANGER';
+                }
+            }
+            return; // No enemies or mission timer while locating and loading terrain.
+        }
+
         if ($this->actions()->isPressed('pause')) $this->paused = !$this->paused;
         if ($this->paused) return;
         if ($this->phase === 'victory' || $this->phase === 'defeat') {
-            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('fire')) $this->enter();
+            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('fire')) {
+                $restart = $this->missionAddress === '' ? [] : ['address' => $this->missionAddress];
+                if ($this->missionTerrain !== null) {
+                    $restart['latitude'] = $this->missionTerrain->latitude;
+                    $restart['longitude'] = $this->missionTerrain->longitude;
+                    $restart['label'] = $this->missionTerrain->label;
+                }
+                $this->enter($restart);
+            }
             return;
         }
         $this->time += $dt;
-        $this->scroll += $dt * 75;
+        // 250 source pixels/s ≈ 50 m/s in metropolitan France; old demo remains unchanged.
+        $this->scroll += $dt * ($this->missionTerrain === null ? 75.0 : 250.0);
+        $this->geoElapsed += $dt;
+        $this->updateTerrainTiles();
+        if ($this->geoState === 'fallback' && ($this->missionTiles?->readyCount() ?? 0) >= 2) {
+            $this->geoState = 'ready';
+            $this->geoMessage = '';
+        }
         $this->invulnerable = max(0, $this->invulnerable - $dt);
         $dx = $this->demo ? sin($this->time * 1.4) * 0.6 : $this->actions()->axis('left', 'right');
         $dy = $this->demo ? 0 : $this->actions()->axis('up', 'down');
@@ -182,6 +365,51 @@ final class PlayScene extends AbstractScene
         }
     }
 
+    /** Cast the Blender alpha silhouettes onto the orthophoto, below the planes. */
+    private function drawMissionShadows(Renderer $r): void
+    {
+        if ($this->missionTerrain === null) {
+            return;
+        }
+        // A fixed NW sunlight direction and high sun (68 degrees).
+        $metersPerPixel = $this->missionTerrain->metersPerPixel();
+        $offsetScale = 1.0 / tan(deg2rad(68)) / $metersPerPixel;
+        $bearing = deg2rad(135); // Shadow SE, opposite the NW sunlight.
+        $offset = static fn (float $altitude): array => [
+            sin($bearing) * $altitude * $offsetScale,
+            -cos($bearing) * $altitude * $offsetScale,
+        ];
+
+        foreach ($this->enemies as $enemy) {
+            $texture = $enemy['type'] === 'bf109' ? $this->bf109ShadowTex : $this->ju87ShadowTex;
+            if ($texture === null) {
+                continue;
+            }
+            [$ox, $oy] = $offset($enemy['type'] === 'bf109' ? 24.0 : 20.0);
+            $r->copy($texture, null, $enemy['x'] - $enemy['width'] / 2 + $ox,
+                $enemy['y'] - $enemy['height'] / 2 + $oy, $enemy['width'], $enemy['height']);
+        }
+        if ($this->phase === 'boss' && $this->bossShadowTex !== null) {
+            [$ox, $oy] = $offset(35.0);
+            $r->copy($this->bossShadowTex, null,
+                $this->bossX - 80 + $ox, $this->bossY - 40 + $oy, 160, 80);
+        }
+        if ($this->playerShadowTex !== null) {
+            [$ox, $oy] = $offset(15.0);
+            $r->copy($this->playerShadowTex, null, $this->x - 30 + $ox,
+                $this->y - 30 + $oy, 60, 60);
+        }
+    }
+
+    private function asciiLabel(string $text): string
+    {
+        $text = strtr($text, [
+            'é'=>'e', 'è'=>'e', 'ê'=>'e', 'É'=>'E', 'à'=>'a', 'À'=>'A',
+            'ç'=>'c', 'Ç'=>'C', 'î'=>'i', 'ô'=>'o', 'ù'=>'u', 'û'=>'u',
+        ]);
+        return strtoupper(substr(preg_replace('/[^\x20-\x7E]/', ' ', $text) ?? '', 0, 42));
+    }
+
     public function render(Renderer $r): void
     {
         $r->clear([38, 63, 53]);
@@ -191,7 +419,12 @@ final class PlayScene extends AbstractScene
             $r->copy($this->groundTex, null, 0, $y, 320, 480);
             $r->copy($this->groundTex, null, 0, $y + 480, 320, 480, false, true);
         }
+        if ($this->missionTerrain !== null && $this->missionTiles !== null) {
+            [$cameraX, $cameraY] = $this->missionTerrain->camera($this->scroll);
+            $this->missionTiles->draw($r, $cameraX, $cameraY, $this->width(), $this->height());
+        }
         $r->fillRect(0, 0, 320, 480, [10, 28, 23, 70]);
+        $this->drawMissionShadows($r);
         foreach ($this->enemies as $e) {
             $texture = $e['type'] === 'bf109' ? $this->bf109Tex : $this->ju87Tex;
             $r->copy($texture, EnemyProfile::frame($e), $e['x'] - $e['width'] / 2,
@@ -210,16 +443,41 @@ final class PlayScene extends AbstractScene
         foreach ($this->sparks as $s) $r->fillRect($s['x'], $s['y'], 4, 4, [255, 177, 63]);
         $r->fillRect(0, 0, 320, 31, [20, 30, 34, 225]);
         $this->font()->draw($r, 'LIVES ' . $this->lives . '   SCORE ' . $this->score, 7, 8, 1, [255, 248, 215]);
-        $this->font()->draw($r, '(C) IGN 2023', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
+        $this->font()->draw($r, '(C) IGN - BD ORTHO', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
+        if ($this->missionTerrain !== null) {
+            $r->fillRect(0, 31, 320, 18, [17, 28, 32, 217]);
+            $zone = $this->asciiLabel($this->missionTerrain->label);
+            $line = $this->geoState === 'fallback' ? 'IGN HS - F: ADRESSE'
+                : 'ZONE: ' . substr($zone, 0, 32);
+            $this->font()->draw($r, $line, 6, 36, 1, [250, 231, 185]);
+        }
         if ($this->phase === 'boss') {
-            $r->fillRect(55, 40, 210, 9, [27, 31, 31]);
-            $r->fillRect(57, 42, 206 * $this->bossHp / 100, 5, [217, 79, 58]);
-            $this->font()->draw($r, 'JUNKERS G 38', 160, 54, 1, [255, 248, 215], 'center');
+            $bossBarY = $this->missionTerrain !== null ? 57 : 40;
+            $r->fillRect(55, $bossBarY, 210, 9, [27, 31, 31]);
+            $r->fillRect(57, $bossBarY + 2, 206 * $this->bossHp / 100, 5, [217, 79, 58]);
+            $this->font()->draw($r, 'JUNKERS G 38', 160, $bossBarY + 14, 1, [255, 248, 215], 'center');
         }
         if ($this->phase === 'victory' || $this->phase === 'defeat') {
             $r->fillRect(20, 190, 280, 90, [18, 28, 32, 235]);
             $this->font()->draw($r, $this->phase === 'victory' ? 'VICTORY' : 'MISSION FAILED', 160, 212, 2, [255, 230, 180], 'center');
             $this->font()->draw($r, 'ENTER OR SPACE TO RESTART', 160, 253, 1, [220, 220, 210], 'center');
+        }
+        if ($this->geoState === 'search' || $this->geoState === 'loading'
+            || $this->geoState === 'error') {
+            $r->fillRect(16, 178, 288, 126, [11, 25, 32, 241]);
+            $r->drawRect(16, 178, 288, 126, [244, 210, 142]);
+            $title = match ($this->geoState) {
+                'search' => 'RECHERCHE DE L ADRESSE',
+                'loading' => 'CHARGEMENT PHOTOS IGN',
+                default => 'ADRESSE INTROUVABLE',
+            };
+            $this->font()->draw($r, $title, 160, 202, 1, [255, 234, 168], 'center');
+            $message = $this->asciiLabel($this->geoMessage);
+            $this->font()->draw($r, substr($message, 0, 36), 160, 232, 1, [230, 229, 208], 'center');
+            if ($this->geoState === 'error') {
+                $this->font()->draw($r, 'ENTREE OU F : AUTRE ADRESSE', 160, 270, 1,
+                    [255, 242, 201], 'center');
+            }
         }
         if ($this->paused) {
             $r->fillRect(30, 206, 260, 65, [18, 28, 32, 235]);

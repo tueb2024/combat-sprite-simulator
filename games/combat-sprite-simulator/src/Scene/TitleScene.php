@@ -9,6 +9,7 @@ final class TitleScene extends MenuScene
 {
     protected string $title = 'COMBAT SPRITE';
     private $flightListener = null;
+    private $missionListener = null;
 
     public function enter(array $params = []): void
     {
@@ -25,6 +26,16 @@ final class TitleScene extends MenuScene
             }
         };
         $this->engine->bridge->on('fly-to-address', $this->flightListener);
+        $this->missionListener = function (array $event): void {
+            if ($this->scenes()->current() !== $this) {
+                return;
+            }
+            $address = trim((string) ($event['address'] ?? ''));
+            if ($address !== '') {
+                $this->scenes()->switchTo(PlayScene::class, ['address' => $address], false);
+            }
+        };
+        $this->engine->bridge->on('mission-at-address', $this->missionListener);
     }
 
     public function exit(): void
@@ -33,13 +44,18 @@ final class TitleScene extends MenuScene
             $this->engine->bridge->removeListener('fly-to-address', $this->flightListener);
             $this->flightListener = null;
         }
+        if ($this->missionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->missionListener);
+            $this->missionListener = null;
+        }
     }
 
     protected function items(): array
     {
         return [
             ['START MISSION', null, fn () => $this->scenes()->switchTo(PlayScene::class)],
-            ['SURVOL A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class)],
+            ['MISSION A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class, ['purpose' => 'mission'])],
+            ['SURVOL A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class, ['purpose' => 'flight'])],
             ['SURVOL LIBRE', null, fn () => $this->scenes()->switchTo(GeoFlightScene::class)],
         ];
     }
