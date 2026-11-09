@@ -27,6 +27,7 @@ final class GeoFlightScene extends AbstractScene
     private string $location = 'Beauce - demonstration';
     private string $status = 'Enter a French address above the game';
     private float $latitude = 48.17;
+    private int $bankFrame = 1;
 
     private const PLANE_X = 160;
     private const PLANE_Y = 300;
@@ -36,19 +37,21 @@ final class GeoFlightScene extends AbstractScene
     public function enter(array $params = []): void
     {
         $this->seconds = 0;
+        $this->bankFrame = 1;
         $this->lookupGeneration++;
         $this->location = 'Beauce - demonstration';
         $this->status = 'IGN 20cm orthophoto - loading';
         $this->setPosition(48.17, 1.54, $this->location);
 
         $this->tiles = new OrthoTileManager($this->engine->http(), $this->sdl());
-        if (!$this->sdl()->hasTexture('combat-hurricane')) {
-            $this->sdl()->loadTexture('combat-hurricane', 'assets/sprites/hurricane-atlas.png');
+        if (!$this->sdl()->hasTexture('combat-hurricane-ww2')) {
+            $this->sdl()->loadTexture('combat-hurricane-ww2', 'assets/sprites/hurricane-mk1-atlas.png');
         }
-        $this->hurricaneTexture = $this->sdl()->getTexture('combat-hurricane')['texture'];
+        $this->hurricaneTexture = $this->sdl()->getTexture('combat-hurricane-ww2')['texture'];
 
-        $atlas = $this->engine->config->path('assets/sprites/hurricane-atlas.png');
-        $this->shadowTexture = AircraftShadow::create($this->sdl(), $atlas);
+        // The same Blender atlas as PlayScene; shadow is derived from the real 512px silhouette.
+        $atlas = $this->engine->config->path('assets/sprites/hurricane-mk1-atlas.png');
+        $this->shadowTexture = AircraftShadow::create($this->sdl(), $atlas, 512);
 
         $this->addressListener = function (array $event): void {
             $address = (string) ($event['address'] ?? '');
@@ -106,6 +109,13 @@ final class GeoFlightScene extends AbstractScene
 
     public function update(float $dt): void
     {
+        // Address input belongs to the game, even when /play/ runs without site/index.html.
+        $mouse = $this->engine->input->getMouse();
+        if ($this->actions()->isPressed('search_address')
+            || ($mouse->isPressed(1) && $mouse->y >= 0 && $mouse->y <= 54)) {
+            $this->scenes()->switchTo(AddressEntryScene::class, [], false);
+            return;
+        }
         if ($this->actions()->isPressed('back')) {
             $this->scenes()->switchTo(TitleScene::class, [], false);
             return;
@@ -114,6 +124,7 @@ final class GeoFlightScene extends AbstractScene
         $this->seconds += $dt;
         $dx = $this->actions()->axis('left', 'right');
         $dy = $this->actions()->axis('up', 'down');
+        $this->bankFrame = $dx < 0 ? 0 : ($dx > 0 ? 2 : 1);
 
         // Continuous northward flight; vertical input changes advance speed.
         $advance = max(0, self::FLIGHT_SPEED_PX_S - $dy * 55);
@@ -146,16 +157,17 @@ final class GeoFlightScene extends AbstractScene
         $shadowX = self::PLANE_X + sin($shadowBearing) * $shadowLength;
         $shadowY = self::PLANE_Y - cos($shadowBearing) * $shadowLength;
         if ($this->shadowTexture !== null) {
-            $r->copy($this->shadowTexture, null, $shadowX - 27, $shadowY - 27, 54, 54);
+            $r->copy($this->shadowTexture, null, $shadowX - 30, $shadowY - 30, 60, 60);
         }
+        $propFrame = ((int) ($this->seconds * 18)) % 3;
         $r->copy(
             $this->hurricaneTexture,
-            [256, 256, 256, 256],
-            self::PLANE_X - 28, self::PLANE_Y - 28, 56, 56
+            [$propFrame * 512, $this->bankFrame * 512, 512, 512],
+            self::PLANE_X - 30, self::PLANE_Y - 30, 60, 60
         );
 
         $r->fillRect(0, 0, 320, 54, [10, 24, 28, 210]);
-        $this->font()->draw($r, 'SURVOL LIBRE - IGN 20 CM', 160, 7, 1, [255, 244, 200], 'center');
+        $this->font()->draw($r, 'ADRESSE [F] / TOUCHER ICI', 160, 7, 1, [255, 244, 200], 'center');
         $this->font()->draw($r, substr($this->location, 0, 41), 7, 25, 1, [242, 240, 220]);
         $meters = GeoProjection::metersPerPixel($this->latitude);
         $this->font()->draw($r, 'RES ' . round($meters * 100) . ' CM/PX', 7, 40, 1, [224, 224, 208]);
