@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Combat Sprite Simulator : pilotez un Hurricane au-dessus des photographies aériennes de l'IGN, à partir d'une adresse française.">
-  <title>Combat Sprite Simulator — Survol libre</title>
+  <title>Combat Sprite Simulator — Mission à l'adresse</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0a141b; color: #eee; }
     * { box-sizing: border-box; }
@@ -27,11 +27,12 @@
 <body>
   <main>
     <h1>Combat Sprite Simulator</h1>
-    <label for="address">Survoler une adresse en France métropolitaine</label>
+    <label for="address">Choisissez le théâtre de vos combats en France métropolitaine</label>
     <form id="flight-form">
       <input id="address" type="search" autocomplete="street-address" maxlength="180"
         placeholder="Rue, commune, code postal..." aria-describedby="status" required>
-      <button type="submit">Survoler</button>
+      <button type="submit">Combattre ici</button>
+      <button id="free-flight" type="button">Survol libre</button>
     </form>
     <p id="status" aria-live="polite">Chargement du moteur JumPHP…</p>
 
@@ -40,9 +41,9 @@
         allow="fullscreen; autoplay" loading="eager"></iframe>
     </div>
     <p class="help">
-      L'adresse ouvre le mode Survol libre. Flèches ou ZQSD/WASD pour diriger l'avion,
-      Échap pour retourner au menu. Sans adresse, sélectionnez « SURVOL LIBRE » dans le jeu
-      pour découvrir la zone de démonstration.
+      « Combattre ici » déclenche les vagues de Bf 109, les Stuka puis le boss Junkers G 38
+      au-dessus des vraies photographies IGN de l'adresse choisie.
+      « Survol libre » permet de découvrir les lieux sans ennemis.
       La recherche et la simulation sont exécutées en PHP dans JumPHP ; cette page ne fait que transmettre la saisie.
     </p>
     <footer>
@@ -59,17 +60,17 @@
     let ready = false;
     let pending = null;
 
-    function sendAddress(address) {
+    function sendAddress(address, mode = 'mission') {
       try {
         const bridge = game.contentWindow?.JumPHP;
         if (!ready || typeof bridge?.send !== 'function') {
-          pending = address;
+          pending = { address, mode };
           status.textContent = 'Le jeu termine son chargement…';
           return;
         }
-        bridge.send('fly-to-address', { address });
+        bridge.send(mode === 'flight' ? 'fly-to-address' : 'mission-at-address', { address });
         pending = null;
-        status.textContent = 'Recherche IGN en cours : ' + address;
+        status.textContent = (mode === 'mission' ? 'Mission' : 'Survol') + ' : ' + address;
         game.focus();
       } catch (error) {
         status.textContent = 'Le jeu doit être hébergé sur la même origine que cette page.';
@@ -82,13 +83,21 @@
         status.textContent = 'Saisissez une adresse plus précise.';
         return;
       }
-      sendAddress(address);
+      sendAddress(address, 'mission');
+    });
+    document.getElementById('free-flight').addEventListener('click', () => {
+      const address = field.value.trim();
+      if (address.length < 3) {
+        status.textContent = 'Saisissez une adresse plus précise.';
+        return;
+      }
+      sendAddress(address, 'flight');
     });
     window.addEventListener('message', (event) => {
       if (event.source !== game.contentWindow || event.data?.type !== 'jumphp:ready') return;
       ready = true;
       status.textContent = 'Prêt : saisissez une adresse ou utilisez le menu du jeu.';
-      if (pending) sendAddress(pending);
+      if (pending) sendAddress(pending.address, pending.mode);
     });
   </script>
 </body>
