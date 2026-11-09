@@ -20,8 +20,8 @@ final class AircraftShadow
         $sample = imagecreatetruecolor($size, $size);
         imagealphablending($sample, false);
         imagesavealpha($sample, true);
-        imagecopyresampled($sample, $atlas, 0, 0, $frameSize, $frameSize, $size, $size,
-            $frameSize, $frameSize, $frameSize, $frameSize);
+        imagecopyresampled($sample, $atlas, 0, 0, $frameSize, $frameSize,
+            $size, $size, $frameSize, $frameSize);
         imagedestroy($atlas);
 
         $shadow = imagecreatetruecolor($size, $size);
