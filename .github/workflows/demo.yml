@@ -1,7 +1,7 @@
 name: demo
 on:
   push:
-    branches: [feature/first-playable]
+    branches: [feature/first-playable, feature/ign-address-flight]
   workflow_dispatch:
 jobs:
   jumphp:
@@ -26,10 +26,16 @@ jobs:
           JUMPHP_SCENE: 'App\Scene\PlayScene'
           JUMPHP_SCENE_PARAMS: '{"boss":true}'
         run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/boss.png
+      - name: Free flight screenshot
+        env:
+          JUMPHP_SCENE: 'App\Scene\GeoFlightScene'
+        run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/survol.png
       - name: Browser engine
         run: bin/jumphp engine:download
       - name: Browser build
         run: bin/jumphp build combat-sprite-simulator
+      - name: Build address-search site
+        run: bin/jumphp build:site combat-sprite-simulator
       - name: Browser screenshot
         run: bin/jumphp webshot combat-sprite-simulator 4 '[[1,"Enter"],[2,"ArrowLeft"],[2.4," "]]'
       - uses: actions/upload-artifact@v4
