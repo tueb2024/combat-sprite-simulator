@@ -56,12 +56,18 @@ final class PlayScene extends AbstractScene
             $this->bossY = 85;
             $this->bossHp = (int)($params['bossHp'] ?? 100);
         }
-        if (!$this->sdl()->hasTexture('combat-hurricane-ww2')) {
-            $this->sdl()->loadTexture('combat-hurricane-ww2', 'assets/sprites/hurricane-mk1-atlas.png');
-            $this->sdl()->loadTexture('combat-junkers', 'assets/sprites/junkers-atlas.png');
-            $this->sdl()->loadTexture('combat-ground', 'assets/tiles/ign-beauce-2023.png');
-            $this->sdl()->loadTexture('combat-bf109', 'assets/sprites/bf109-e4-atlas.png');
-            $this->sdl()->loadTexture('combat-ju87', 'assets/sprites/ju87-b2-atlas.png');
+        // Flight mode can pre-load the Hurricane before the combat scene.
+        // Load each asset independently so the other planes are never skipped.
+        foreach ([
+            'combat-hurricane-ww2' => 'assets/sprites/hurricane-mk1-atlas.png',
+            'combat-junkers' => 'assets/sprites/junkers-atlas.png',
+            'combat-ground' => 'assets/tiles/ign-beauce-2023.png',
+            'combat-bf109' => 'assets/sprites/bf109-e4-atlas.png',
+            'combat-ju87' => 'assets/sprites/ju87-b2-atlas.png',
+        ] as $name => $path) {
+            if (!$this->sdl()->hasTexture($name)) {
+                $this->sdl()->loadTexture($name, $path);
+            }
         }
         $this->hurricaneTex = $this->sdl()->getTexture('combat-hurricane-ww2')['texture'];
         $this->junkersTex = $this->sdl()->getTexture('combat-junkers')['texture'];
