@@ -61,7 +61,7 @@ final class AddressEntryScene extends AbstractScene
             // Fallback for older SDL builds without TEXTINPUT.
             $typed = '';
             foreach ($keyboard->getTyped() as $key) {
-                if (($key >= 32 && $key <= 126) && !in_array($key, [127], true)) {
+                if ($key >= 32 && $key <= 126) {
                     $typed .= chr($key);
                 }
             }
