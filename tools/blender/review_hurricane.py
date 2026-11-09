@@ -167,6 +167,7 @@ def build(data):
         obj.name = name
         obj.rotation_euler = direction.to_track_quat('Z', 'Y').to_euler()
         obj.data.materials.append(mat)
+        return obj
 
     for station in (1, 2, 3, 4, 5):
         i = station * 4
@@ -192,17 +193,23 @@ def build(data):
     bpy.context.object.name = 'Merlin spinner'
     bpy.context.object.scale = (0.18, 0.34, 0.18)
     bpy.context.object.data.materials.append(spinner)
+    prop_group = bpy.data.objects.new('three-blade propeller pivot', None)
+    bpy.context.collection.objects.link(prop_group)
+    prop_group.location = (0, nose_y + 0.24, 0.36)
     for angle in (0, 120, 240):
         theta = math.radians(angle)
-        rod('three-blade propeller', (0, nose_y + 0.24, 0.36),
+        blade = rod('three-blade propeller', (0, nose_y + 0.24, 0.36),
             (0.54 * math.cos(theta), nose_y + 0.24 + 0.54 * math.sin(theta), 0.36),
             0.035, spinner)
+        blade.parent = prop_group
+        blade.matrix_parent_inverse = prop_group.matrix_world.inverted()
 
     # Small top-visible vertical fin. The side profile remains secondary.
     verts = [(-0.04, -3.04, 0.38), (0.04, -3.04, 0.38),
              (-0.04, -4.72, 0.35), (0.04, -4.72, 0.35),
              (-0.02, -3.55, 0.63), (0.02, -3.55, 0.63)]
     mesh('vertical fin', verts, [(0, 2, 4), (1, 5, 3), (4, 2, 3, 5)], [green])
+    return prop_group
 
 
 def main():
@@ -242,7 +249,14 @@ def main():
     world.use_nodes = True
     world.node_tree.nodes['Background'].inputs['Color'].default_value = (0.78, 0.81, 0.83, 1)
     world.node_tree.nodes['Background'].inputs['Strength'].default_value = 1.1
-    build(data)
+    prop_group = build(data)
+    root = bpy.data.objects.new('Hurricane physical bank root', None)
+    bpy.context.collection.objects.link(root)
+    for obj in list(bpy.context.scene.objects):
+        if obj is root or obj.parent is not None:
+            continue
+        obj.parent = root
+        obj.matrix_parent_inverse = root.matrix_world.inverted()
     bpy.ops.object.camera_add(location=(0, 0, 18))
     camera = bpy.context.object
     camera.data.type = 'ORTHO'
@@ -255,6 +269,16 @@ def main():
     bpy.context.object.data.size = 8
     scene.render.filepath = str(out / 'hurricane-prototype.png')
     bpy.ops.render.render(write_still=True)
+    scene.render.resolution_x = scene.render.resolution_y = 512
+    for bank_index, bank in enumerate((-24, 0, 24)):
+        root.rotation_euler[1] = math.radians(bank)
+        for prop_index, phase in enumerate((0, 45, 90)):
+            prop_group.rotation_euler[2] = math.radians(phase)
+            scene.render.filepath = str(out / f'hurricane-mk1-b{bank_index}-p{prop_index}.png')
+            bpy.ops.render.render(write_still=True)
+    root.rotation_euler[1] = 0
+    prop_group.rotation_euler[2] = 0
+    scene.render.resolution_x = scene.render.resolution_y = 1024
     bpy.ops.wm.save_as_mainfile(filepath=str(out / 'hurricane-prototype.blend'))
     (out / 'render-info.json').write_text(json.dumps({
         'blender': bpy.app.version_string, 'device': device,

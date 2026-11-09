@@ -1,0 +1,13 @@
+{
+  "id": "junkers-g38", "designation": "Junkers G 38", "role": "boss",
+  "source_file": "source-plan.jpg", "source_working_size": [2048, 1048],
+  "source_orientation": "nose_bottom", "centerline_px": 972, "nose_px": 801, "tail_px": 0,
+  "span_bounds_px": [219, 1728], "dimensions_m": {"span": 45.0, "length": 23.0},
+  "gameplay_size": [160, 80],
+  "right_wing_px": [[1019, 705], [1200, 704], [1510, 626], [1680, 535], [1715, 500], [1725, 455], [1690, 430], [1575, 410], [1320, 399], [1018, 380]],
+  "right_tail_px": [[988, 99], [1118, 95], [1128, 75], [1128, 18], [1110, 10], [988, 12]],
+  "body_sections_px": [[801, 7], [770, 30], [710, 43], [640, 52], [530, 50], [410, 45], [260, 38], [120, 28], [0, 20]],
+  "canopy_px": [739, 790], "palette": "junkers_silver",
+  "engine_centers_px": [[705, 669], [858, 676], [1086, 676], [1238, 669]],
+  "source_confidence": "NACA 1930 G 38 plan; armament in game remains fictional"
+}

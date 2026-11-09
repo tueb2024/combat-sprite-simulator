@@ -12,4 +12,11 @@ scp -O "$host:$remote/output/hurricane-prototype.png" "$review/hurricane-prototy
 scp -O "$host:$remote/output/hurricane-prototype.blend" "$review/hurricane-prototype.blend"
 scp -O "$host:$remote/output/render-info.json" "$review/render-info.json"
 scp -O "$host:$remote/output/render.log" "$review/render.log"
+mkdir -p artifacts/source-review
+for bank in 0 1 2; do
+  for prop in 0 1 2; do
+    scp -O "$host:$remote/output/hurricane-mk1-b$bank-p$prop.png" \
+      "artifacts/source-review/hurricane-mk1-b$bank-p$prop.png"
+  done
+done
 echo 'Hurricane review Blender outputs retrieved from GTX.'

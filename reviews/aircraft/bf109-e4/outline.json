@@ -1,0 +1,12 @@
+{
+  "id": "bf109-e4", "designation": "Messerschmitt Bf 109 E-4", "role": "enemy",
+  "source_file": "source-plan.jpg", "source_working_size": [1877, 1311],
+  "source_orientation": "nose_left", "centerline_px": 654, "nose_px": 55, "tail_px": 1125,
+  "span_bounds_px": [31, 1277], "dimensions_m": {"span": 9.87, "length": 8.64},
+  "gameplay_size": [46, 48],
+  "right_wing_px": [[255, 594], [289, 590], [300, 62], [307, 34], [340, 29], [437, 31], [452, 55], [485, 318], [530, 594], [558, 615]],
+  "right_tail_px": [[957, 635], [966, 505], [978, 483], [1000, 475], [1048, 475], [1074, 492], [1082, 549], [1051, 635]],
+  "body_sections_px": [[55, 3], [75, 35], [135, 47], [260, 54], [385, 53], [550, 49], [700, 38], [870, 26], [980, 18], [1085, 13], [1125, 2]],
+  "canopy_px": [380, 552], "roundel_px": [400, 350], "palette": "luftwaffe_1940",
+  "source_confidence": "Bf 109 E family plan, E-4 canopy and details simplified"
+}

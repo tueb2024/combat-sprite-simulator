@@ -18,8 +18,7 @@ REVIEW = ROOT / 'reviews/aircraft/hurricane-mk1'
 GAME = ROOT / 'games/combat-sprite-simulator'
 OUTLINE = json.loads((REVIEW / 'outline.json').read_text(encoding='utf-8'))
 RENDER = Image.open(REVIEW / 'hurricane-prototype.png').convert('RGBA')
-OLD_ATLAS = Image.open(GAME / 'assets/sprites/hurricane-mk1-atlas.png').convert('RGBA')
-OLD = OLD_ATLAS.crop((512, 512, 1024, 1024))
+OLD = Image.open(REVIEW / 'legacy-frame.png').convert('RGBA')
 SOURCE = Image.open(io.BytesIO(cairosvg.svg2png(url=str(REVIEW / 'source-hurricane-3view.svg')))).convert('RGBA')
 FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 
@@ -127,7 +126,7 @@ def board_three():
     draw = ImageDraw.Draw(board)
     draw.rectangle((420, 118, 769, 467), outline=(50, 62, 65), width=2)
     draw.text((420, 477), 'Zoom x5, pixels non interpolés', font=font(16), fill=(42, 57, 59))
-    draw.text((30, 565), 'Prototype JPG seulement : atlas actif et code PHP inchangés.',
+    draw.text((30, 565), 'Rendu source Blender GTX, intégré dans l atlas actif du jeu.',
               font=font(13), fill=(71, 79, 79))
     save(board, '03-actual-game-size.jpg')
 

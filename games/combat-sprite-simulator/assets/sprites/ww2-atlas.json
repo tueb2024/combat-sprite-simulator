@@ -20,7 +20,7 @@
           267,
           256
         ],
-        "alpha_pixels": 43956
+        "alpha_pixels": 44376
       },
       {
         "name": "bf109-e4-b0-p1",
@@ -38,7 +38,7 @@
           267,
           256
         ],
-        "alpha_pixels": 44480
+        "alpha_pixels": 44364
       },
       {
         "name": "bf109-e4-b0-p2",
@@ -56,7 +56,7 @@
           267,
           256
         ],
-        "alpha_pixels": 44709
+        "alpha_pixels": 44405
       },
       {
         "name": "bf109-e4-b1-p0",
@@ -74,7 +74,7 @@
           267,
           256
         ],
-        "alpha_pixels": 48183
+        "alpha_pixels": 47963
       },
       {
         "name": "bf109-e4-b1-p1",
@@ -92,7 +92,7 @@
           267,
           256
         ],
-        "alpha_pixels": 48834
+        "alpha_pixels": 47939
       },
       {
         "name": "bf109-e4-b1-p2",
@@ -110,7 +110,7 @@
           267,
           256
         ],
-        "alpha_pixels": 49106
+        "alpha_pixels": 47988
       },
       {
         "name": "bf109-e4-b2-p0",
@@ -128,7 +128,7 @@
           267,
           256
         ],
-        "alpha_pixels": 43917
+        "alpha_pixels": 44393
       },
       {
         "name": "bf109-e4-b2-p1",
@@ -146,7 +146,7 @@
           267,
           256
         ],
-        "alpha_pixels": 44489
+        "alpha_pixels": 44372
       },
       {
         "name": "bf109-e4-b2-p2",
@@ -164,7 +164,7 @@
           267,
           256
         ],
-        "alpha_pixels": 44721
+        "alpha_pixels": 44411
       }
     ],
     "gameplay_size": [
@@ -194,7 +194,7 @@
           256,
           256
         ],
-        "alpha_pixels": 49406
+        "alpha_pixels": 42938
       },
       {
         "name": "hurricane-mk1-b0-p1",
@@ -212,7 +212,7 @@
           256,
           256
         ],
-        "alpha_pixels": 49872
+        "alpha_pixels": 42935
       },
       {
         "name": "hurricane-mk1-b0-p2",
@@ -230,7 +230,7 @@
           256,
           256
         ],
-        "alpha_pixels": 50103
+        "alpha_pixels": 42962
       },
       {
         "name": "hurricane-mk1-b1-p0",
@@ -248,7 +248,7 @@
           256,
           256
         ],
-        "alpha_pixels": 54216
+        "alpha_pixels": 46162
       },
       {
         "name": "hurricane-mk1-b1-p1",
@@ -266,7 +266,7 @@
           256,
           256
         ],
-        "alpha_pixels": 54790
+        "alpha_pixels": 46158
       },
       {
         "name": "hurricane-mk1-b1-p2",
@@ -284,7 +284,7 @@
           256,
           256
         ],
-        "alpha_pixels": 55055
+        "alpha_pixels": 46193
       },
       {
         "name": "hurricane-mk1-b2-p0",
@@ -302,7 +302,7 @@
           256,
           256
         ],
-        "alpha_pixels": 49331
+        "alpha_pixels": 42952
       },
       {
         "name": "hurricane-mk1-b2-p1",
@@ -320,7 +320,7 @@
           256,
           256
         ],
-        "alpha_pixels": 49850
+        "alpha_pixels": 42954
       },
       {
         "name": "hurricane-mk1-b2-p2",
@@ -338,7 +338,7 @@
           256,
           256
         ],
-        "alpha_pixels": 50088
+        "alpha_pixels": 42977
       }
     ],
     "gameplay_size": [
@@ -368,7 +368,7 @@
           313,
           256
         ],
-        "alpha_pixels": 51721
+        "alpha_pixels": 50719
       },
       {
         "name": "ju87-b2-b0-p1",
@@ -386,7 +386,7 @@
           313,
           256
         ],
-        "alpha_pixels": 52355
+        "alpha_pixels": 50701
       },
       {
         "name": "ju87-b2-b0-p2",
@@ -404,7 +404,7 @@
           313,
           256
         ],
-        "alpha_pixels": 52756
+        "alpha_pixels": 50718
       },
       {
         "name": "ju87-b2-b1-p0",
@@ -422,7 +422,7 @@
           313,
           256
         ],
-        "alpha_pixels": 54159
+        "alpha_pixels": 55165
       },
       {
         "name": "ju87-b2-b1-p1",
@@ -440,7 +440,7 @@
           313,
           256
         ],
-        "alpha_pixels": 54853
+        "alpha_pixels": 55148
       },
       {
         "name": "ju87-b2-b1-p2",
@@ -458,7 +458,7 @@
           313,
           256
         ],
-        "alpha_pixels": 55303
+        "alpha_pixels": 55168
       },
       {
         "name": "ju87-b2-b2-p0",
@@ -476,7 +476,7 @@
           313,
           256
         ],
-        "alpha_pixels": 51679
+        "alpha_pixels": 50742
       },
       {
         "name": "ju87-b2-b2-p1",
@@ -494,7 +494,7 @@
           313,
           256
         ],
-        "alpha_pixels": 52360
+        "alpha_pixels": 50730
       },
       {
         "name": "ju87-b2-b2-p2",
@@ -512,7 +512,7 @@
           313,
           256
         ],
-        "alpha_pixels": 52765
+        "alpha_pixels": 50743
       }
     ],
     "gameplay_size": [

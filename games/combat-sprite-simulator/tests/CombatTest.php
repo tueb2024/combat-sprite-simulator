@@ -19,6 +19,27 @@ final class CombatTest extends GameTestCase
         self::assertNotEmpty($this->game->peek('shots'));
     }
 
+    public function testFourWingGunsFireAndBonusesChangeSpeedAndCadence(): void
+    {
+        $this->game->start(PlayScene::class);
+        $this->game->hold('fire', 1);
+        $friendly = array_values(array_filter($this->game->peek('shots'),
+            static fn (array $shot): bool => $shot['friendly']));
+        self::assertCount(4, $friendly);
+        self::assertSame([-22.0, -13.0, 13.0, 22.0],
+            array_map(static fn (array $shot): float => $shot['x'] - 160, $friendly));
+
+        $this->game->start(PlayScene::class, ['testBonus' => 'speed']);
+        $this->game->wait(0.02);
+        self::assertGreaterThan(7, $this->game->peek('speedBoost'));
+        self::assertSame([], $this->game->peek('bonuses'));
+        $this->game->start(PlayScene::class, ['testBonus' => 'rapid']);
+        $this->game->wait(0.02);
+        self::assertGreaterThan(7, $this->game->peek('rapidBoost'));
+        $this->game->hold('fire', 20);
+        self::assertGreaterThan(4, count($this->game->peek('shots')));
+    }
+
     public function testBossCanBeDestroyedAndMissionRestarted(): void
     {
         $this->game->start(PlayScene::class, ['boss' => true, 'bossHp' => 4]);
