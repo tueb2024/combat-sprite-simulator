@@ -15,6 +15,7 @@ final class AddressEntryScene extends AbstractScene
     private string $address = '';
     private string $message = 'TYPE AN ADDRESS OR USE THE KEYPAD';
     private int $selected = 0;
+    private string $purpose = 'flight';
 
     /** @var list<string> */
     private const KEYS = [
@@ -28,6 +29,7 @@ final class AddressEntryScene extends AbstractScene
     public function enter(array $params = []): void
     {
         $this->address = (string) ($params['address'] ?? '');
+        $this->purpose = ($params['purpose'] ?? 'flight') === 'mission' ? 'mission' : 'flight';
         $this->message = 'TYPE AN ADDRESS OR USE THE KEYPAD';
         $this->selected = 0;
     }
@@ -103,7 +105,8 @@ final class AddressEntryScene extends AbstractScene
         }
         if (strlen($this->address . $text) <= 180) {
             $this->address .= $text;
-            $this->message = 'ENTER / GO TO START FLIGHT';
+            $this->message = $this->purpose === 'mission'
+                ? 'ENTER / GO TO START MISSION' : 'ENTER / GO TO START FLIGHT';
         }
     }
 
@@ -131,7 +134,11 @@ final class AddressEntryScene extends AbstractScene
             $this->message = 'ENTER AT LEAST THREE CHARACTERS';
             return;
         }
-        $this->scenes()->switchTo(GeoFlightScene::class, ['address' => $address], false);
+        if ($this->purpose === 'mission') {
+            $this->scenes()->switchTo(PlayScene::class, ['address' => $address], false);
+        } else {
+            $this->scenes()->switchTo(GeoFlightScene::class, ['address' => $address], false);
+        }
     }
 
     private function keyAt(float $x, float $y): ?int
@@ -163,7 +170,8 @@ final class AddressEntryScene extends AbstractScene
     {
         $r->clear([18, 36, 44]);
         $r->fillRect(9, 21, 302, 440, [33, 57, 63]);
-        $this->font()->draw($r, 'SURVOL A L ADRESSE', 160, 42, 2, [251, 234, 188], 'center');
+        $title = $this->purpose === 'mission' ? 'MISSION A L ADRESSE' : 'SURVOL A L ADRESSE';
+        $this->font()->draw($r, $title, 160, 42, 2, [251, 234, 188], 'center');
         $this->font()->draw($r, 'ADRESSE POSTALE / COMMUNE', 20, 82, 1, [238, 232, 207]);
         $r->fillRect(14, 100, 292, 68, [8, 22, 31]);
         $r->drawRect(14, 100, 292, 68, [228, 200, 129]);
@@ -192,7 +200,8 @@ final class AddressEntryScene extends AbstractScene
             $this->font()->draw($r, $key, $x + $w / 2, $y + 10, 1, $selected ? [15, 25, 29] : [240, 236, 209], 'center');
         }
 
-        $this->font()->draw($r, 'FLECHES: TOUCHES  ENTREE: VOLER', 160, 411, 1, [220, 219, 192], 'center');
+        $hint = $this->purpose === 'mission' ? 'ENTREE: COMBATTRE ICI' : 'ENTREE: SURVOLER ICI';
+        $this->font()->draw($r, $hint, 160, 411, 1, [220, 219, 192], 'center');
         $this->font()->draw($r, 'ECHAP: RETOUR', 160, 435, 1, [220, 219, 192], 'center');
     }
 }
