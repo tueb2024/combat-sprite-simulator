@@ -195,14 +195,59 @@ final class PlayScene extends AbstractScene
 
     public function update(float $dt): void
     {
+        // Reopen the same native address field while keeping combat and map modes separate.
+        if ($this->actions()->isPressed('search_address')) {
+            $this->scenes()->switchTo(AddressEntryScene::class,
+                ['purpose' => 'mission', 'address' => $this->missionAddress], false);
+            return;
+        }
+        if ($this->geoState === 'error') {
+            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('back')) {
+                $this->scenes()->switchTo(AddressEntryScene::class,
+                    ['purpose' => 'mission', 'address' => $this->missionAddress], false);
+            }
+            return;
+        }
+        if ($this->geoState === 'search' || $this->geoState === 'loading') {
+            $this->geoElapsed += $dt;
+            if ($this->geoState === 'loading') {
+                $this->updateTerrainTiles();
+                if (($this->missionTiles?->readyCount() ?? 0) >= 2) {
+                    $this->geoState = 'ready';
+                    $this->geoMessage = '';
+                } elseif ($this->geoElapsed >= 12.0) {
+                    // Never pretend a cached demonstration image is the chosen address.
+                    // Keep the game playable with a persistent explicit warning.
+                    $this->geoState = 'fallback';
+                    $this->geoMessage = 'IGN INDISPONIBLE - F POUR CHANGER';
+                }
+            }
+            return; // No enemies or mission timer while locating and loading terrain.
+        }
+
         if ($this->actions()->isPressed('pause')) $this->paused = !$this->paused;
         if ($this->paused) return;
         if ($this->phase === 'victory' || $this->phase === 'defeat') {
-            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('fire')) $this->enter();
+            if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('fire')) {
+                $restart = $this->missionAddress === '' ? [] : ['address' => $this->missionAddress];
+                if ($this->missionTerrain !== null) {
+                    $restart['latitude'] = $this->missionTerrain->latitude;
+                    $restart['longitude'] = $this->missionTerrain->longitude;
+                    $restart['label'] = $this->missionTerrain->label;
+                }
+                $this->enter($restart);
+            }
             return;
         }
         $this->time += $dt;
-        $this->scroll += $dt * 75;
+        // 250 source pixels/s ≈ 50 m/s in metropolitan France; old demo remains unchanged.
+        $this->scroll += $dt * ($this->missionTerrain === null ? 75.0 : 250.0);
+        $this->geoElapsed += $dt;
+        $this->updateTerrainTiles();
+        if ($this->geoState === 'fallback' && ($this->missionTiles?->readyCount() ?? 0) >= 2) {
+            $this->geoState = 'ready';
+            $this->geoMessage = '';
+        }
         $this->invulnerable = max(0, $this->invulnerable - $dt);
         $dx = $this->demo ? sin($this->time * 1.4) * 0.6 : $this->actions()->axis('left', 'right');
         $dy = $this->demo ? 0 : $this->actions()->axis('up', 'down');
