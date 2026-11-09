@@ -17,7 +17,7 @@ final class AddressLookup
     public function search(string $address, callable $found, callable $failed): void
     {
         $address = trim($address);
-        if (mb_strlen($address) < 3 || mb_strlen($address) > 180) {
+        if (strlen($address) < 3 || mb_strlen($address) > 180) {
             $failed('Enter an address between 3 and 180 characters.');
             return;
         }
