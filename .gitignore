@@ -32,3 +32,9 @@ core.[0-9]*
 /.git-project/
 /artifacts/
 /.write-check
+
+# Never commit private or derived aviation book material.
+*.pdf
+/reference-books/
+/reference-index/
+/private/
