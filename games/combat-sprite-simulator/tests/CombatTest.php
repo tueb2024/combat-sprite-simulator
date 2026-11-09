@@ -33,4 +33,16 @@ final class CombatTest extends GameTestCase
         self::assertTrue(Hitbox::overlap(0, 0, 10, 10, 9, 9, 2, 2));
         self::assertFalse(Hitbox::overlap(0, 0, 10, 10, 10, 0, 2, 2));
     }
+
+    public function testPauseStopsTheMissionClock(): void
+    {
+        $this->game->start(PlayScene::class);
+        $this->game->press('pause');
+        $time = $this->game->peek('time');
+        $this->game->wait(1);
+        self::assertSame($time, $this->game->peek('time'));
+        $this->game->press('pause');
+        $this->game->wait(0.2);
+        self::assertGreaterThan($time, $this->game->peek('time'));
+    }
 }

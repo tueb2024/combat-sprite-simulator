@@ -22,12 +22,14 @@ final class PlayScene extends AbstractScene
     private int $score = 0;
     private int $bossHp = 100;
     private string $phase = 'wave';
+    private bool $paused = false;
     private bool $demo = false;
     private array $enemies = [];
     private array $shots = [];
     private array $sparks = [];
     private $hurricaneTex = null;
     private $junkersTex = null;
+    private $groundTex = null;
 
     public function enter(array $params = []): void
     {
@@ -41,6 +43,7 @@ final class PlayScene extends AbstractScene
         $this->score = 0;
         $this->bossHp = 100;
         $this->phase = 'wave';
+        $this->paused = false;
         $this->demo = !empty($params['demo']);
         $this->enemies = $this->shots = $this->sparks = [];
         if (!empty($params['boss'])) {
@@ -51,13 +54,17 @@ final class PlayScene extends AbstractScene
         if (!$this->sdl()->hasTexture('combat-hurricane')) {
             $this->sdl()->loadTexture('combat-hurricane', 'assets/sprites/hurricane-atlas.png');
             $this->sdl()->loadTexture('combat-junkers', 'assets/sprites/junkers-atlas.png');
+            $this->sdl()->loadTexture('combat-ground', 'assets/tiles/ign-beauce-2023.png');
         }
         $this->hurricaneTex = $this->sdl()->getTexture('combat-hurricane')['texture'];
         $this->junkersTex = $this->sdl()->getTexture('combat-junkers')['texture'];
+        $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
     }
 
     public function update(float $dt): void
     {
+        if ($this->actions()->isPressed('pause')) $this->paused = !$this->paused;
+        if ($this->paused) return;
         if ($this->phase === 'victory' || $this->phase === 'defeat') {
             if ($this->actions()->isPressed('confirm') || $this->actions()->isPressed('fire')) $this->enter();
             return;
@@ -81,7 +88,7 @@ final class PlayScene extends AbstractScene
                 $this->enemies[] = ['x' => 40 + $lane * 60, 'y' => -25, 'hp' => 3];
                 $this->spawnDelay = 1.2;
             }
-            if ($this->time >= 30) {
+            if ($this->time >= 50) {
                 $this->phase = 'boss';
                 $this->enemies = [];
             }
@@ -152,13 +159,13 @@ final class PlayScene extends AbstractScene
     public function render(Renderer $r): void
     {
         $r->clear([38, 63, 53]);
-        for ($i = -1; $i < 8; $i++) {
-            $y = $i * 80 + fmod($this->scroll, 80);
-            $r->fillRect(0, $y, 320, 28, [48, 77, 58]);
-            $r->fillRect(15, $y + 26, 75, 24, [70, 94, 64]);
-            $r->fillRect(210, $y + 44, 100, 20, [58, 83, 61]);
-            $r->drawLine(0, $y + 7, 320, $y + 53, [81, 96, 67]);
+        $offset = fmod($this->scroll, 960);
+        for ($i = -1; $i < 2; $i++) {
+            $y = $offset + $i * 960;
+            $r->copy($this->groundTex, null, 0, $y, 320, 480);
+            $r->copy($this->groundTex, null, 0, $y + 480, 320, 480, false, true);
         }
+        $r->fillRect(0, 0, 320, 480, [10, 28, 23, 70]);
         foreach ($this->enemies as $e) {
             $r->fillRect($e['x'] - 14, $e['y'] - 4, 28, 9, [148, 138, 110]);
             $r->fillRect($e['x'] - 4, $e['y'] - 12, 8, 25, [188, 175, 138]);
@@ -177,6 +184,7 @@ final class PlayScene extends AbstractScene
         foreach ($this->sparks as $s) $r->fillRect($s['x'], $s['y'], 4, 4, [255, 177, 63]);
         $r->fillRect(0, 0, 320, 31, [20, 30, 34, 225]);
         $this->font()->draw($r, 'LIVES ' . $this->lives . '   SCORE ' . $this->score, 7, 8, 1, [255, 248, 215]);
+        $this->font()->draw($r, '(C) IGN 2023', 315, 466, 1, [255, 248, 215], 'right', [0, 0, 0]);
         if ($this->phase === 'boss') {
             $r->fillRect(55, 40, 210, 9, [27, 31, 31]);
             $r->fillRect(57, 42, 206 * $this->bossHp / 100, 5, [217, 79, 58]);
@@ -186,6 +194,11 @@ final class PlayScene extends AbstractScene
             $r->fillRect(20, 190, 280, 90, [18, 28, 32, 235]);
             $this->font()->draw($r, $this->phase === 'victory' ? 'VICTORY' : 'MISSION FAILED', 160, 212, 2, [255, 230, 180], 'center');
             $this->font()->draw($r, 'ENTER OR SPACE TO RESTART', 160, 253, 1, [220, 220, 210], 'center');
+        }
+        if ($this->paused) {
+            $r->fillRect(30, 206, 260, 65, [18, 28, 32, 235]);
+            $this->font()->draw($r, 'PAUSED', 160, 221, 2, [255, 230, 180], 'center');
+            $this->font()->draw($r, 'ESC TO RESUME', 160, 253, 1, [220, 220, 210], 'center');
         }
     }
 }

@@ -13,8 +13,19 @@ jobs:
         run: bin/jumphp install combat-sprite-simulator
       - name: Test
         run: bin/jumphp test combat-sprite-simulator
+      - name: Repository lint
+        run: bin/jumphp lint
       - name: Headless screenshot
         run: bin/jumphp shot combat-sprite-simulator 120
+      - name: Play screenshot
+        env:
+          JUMPHP_INPUT: '[[5,"confirm"]]'
+        run: bin/jumphp shot combat-sprite-simulator 240 var/screenshots/play.png
+      - name: Boss screenshot
+        env:
+          JUMPHP_SCENE: 'App\Scene\PlayScene'
+          JUMPHP_SCENE_PARAMS: '{"boss":true}'
+        run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/boss.png
       - name: Browser engine
         run: bin/jumphp engine:download
       - name: Browser build

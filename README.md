@@ -18,4 +18,4 @@ Open `http://localhost:8181` on the same machine. For a second machine, use an S
 
 This repository uses the canonical JumPHP source at `https://git.jumphp.net/jumphp/jumPhp.git`, commit `f9365d7375c804d1ce4bbbd48adabbf7e7e1fe52`. Its `jumphp` Git remote points there; `origin` points to this independent game's private GitHub repository.
 
-The initial background is procedural artwork. No IGN orthophoto is included yet. The 3D aircraft sprites are original Blender renders; their script is in `tools/blender/` and source scene in `assets/source/`.
+The scrolling background is a licensed IGN BD ORTHO® 2023 extract; see `CREDITS.md` for its source and attribution. The 3D aircraft sprites are original Blender renders; their script is in `tools/blender/` and source scene in `assets/source/`.
