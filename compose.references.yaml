@@ -1,0 +1,22 @@
+# Independent reference-index tool, not a replacement for JumPHP's Docker CLI.
+# No Docker socket, network, or book contents reach the game image.
+services:
+  reference-index:
+    build:
+      context: .
+      dockerfile: docker/reference-indexer/Dockerfile
+    user: "${CSS_UID:-1000}:${CSS_GID:-1000}"
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    volumes:
+      - type: bind
+        source: "${HOME}/.local/share/combat-sprite-simulator/reference-books"
+        target: /books
+        read_only: true
+      - type: bind
+        source: "${HOME}/.local/share/combat-sprite-simulator/reference-index"
+        target: /index
