@@ -250,15 +250,17 @@ def main():
     gtx_is_ready = False
     for entry in chosen:
         try:
-            item = detail(client, entry)
+            item = (dict(manifest[entry['slug']]) if args.command == 'render' and entry['slug'] in manifest
+                    else detail(client, entry))
             if args.command == 'fetch':
                 item = acquire(client, item, args.out)
                 print(f"fetched {item['slug']} ({item['role']} -> {item['game_role']})", flush=True)
             else:
-                item.update(manifest.get(item['slug'], {}))
                 views = ('top-bank-left', 'top', 'top-bank-right', 'left', 'right')
                 present = all((args.out / item['slug'] / f"{item['slug']}-{view}.png").is_file() for view in views)
                 if present and not args.force:
+                    item['rendered_views'] = [f"{item['slug']}/{item['slug']}-{view}.png" for view in views]
+                    item['render_host'] = 'owner GTX PC'
                     print(f"already rendered {item['slug']}", flush=True)
                 else:
                     if not gtx_is_ready:

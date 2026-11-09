@@ -15,6 +15,7 @@ python3 tools/airmuseums/scrape_views.py render --slugs hawker-hurricane,messers
 # Process the full catalogue, with failures recorded for later retry.
 python3 tools/airmuseums/scrape_views.py fetch --era all --roles all --limit 0 --continue-on-error
 python3 tools/airmuseums/scrape_views.py render --era all --roles all --limit 0 --continue-on-error
+python3 tools/airmuseums/validate_outputs.py --strict
 
 # Optional private 3-frame atlases for future shmup integration (2D packing).
 python3 -m venv /tmp/combat-airmuseums-venv
@@ -22,6 +23,6 @@ python3 -m venv /tmp/combat-airmuseums-venv
 /tmp/combat-airmuseums-venv/bin/python tools/airmuseums/pack_shmup_atlases.py
 ```
 
-`list` classifies the site's `fighter` role as `player_candidate` and every other role as `enemy_candidate`. This is only a roster proposal. The manifest keeps the exact Hangar page and modelled variant so that a later game integration can exclude unsuitable variants or aircraft. `render` uploads the downloaded GLB to the owner's GTX PC over the existing SSH connection, runs Blender 5.2.3 there, and retrieves five transparent 512 px reference PNGs: straight top, 17° left and right bank, and left/right side. It skips completed renders unless `--force` is given. Renders remain private under `artifacts/airmuseums/<slug>/`; `pack_shmup_atlases.py` creates three-frame transparent atlases and a private roster from them.
+`list` classifies the site's `fighter` role as `player_candidate` and every other role as `enemy_candidate`. This is only a roster proposal. The manifest keeps the exact Hangar page and modelled variant so that a later game integration can exclude unsuitable variants or aircraft. `render` uploads the downloaded GLB to the owner's GTX PC over the existing SSH connection, runs Blender 5.2.3 there, and retrieves five transparent 512 px reference PNGs: straight top, 17° left and right bank, and left/right side. It skips completed renders unless `--force` is given. `validate_outputs.py --strict` checks all SHA-256 hashes, RGBA PNG dimensions and GPU metadata. Renders remain private under `artifacts/airmuseums/<slug>/`; `pack_shmup_atlases.py` creates three-frame transparent atlases and a private roster from them.
 
 The Hangar visibly offers GLB downloads, but the inspected pages do not state a general licence allowing redistribution or incorporation of its models or derived renders into a published game. The user reports permission for a test, and explicitly requested one Bf 109 contact sheet on GitHub: [`preview.jpg`](../../artifacts/airmuseums/messerschmitt-bf-109/preview.jpg). The remaining GLBs, renders and atlases stay out of Git. Confirm the scope of reuse rights before shipping site-derived sprites in a game. Our existing source-traced aircraft atlases remain the published game assets.
