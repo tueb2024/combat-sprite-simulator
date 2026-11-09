@@ -4,5 +4,6 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /work
 COPY tools/references/build_index.py /work/build_index.py
+COPY tools/references/search_index.py /work/search_index.py
 ENV PYTHONDONTWRITEBYTECODE=1
 ENTRYPOINT ["python", "/work/build_index.py"]
