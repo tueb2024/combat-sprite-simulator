@@ -195,6 +195,8 @@ def gtx_prepare(host):
 
 def gtx_render(item, out, host):
     slug = item['slug']
+    if not item.get('model_file'):
+        raise RuntimeError(f'No private GLB recorded for {slug}; run fetch for this slug first')
     model = out / item['model_file']
     if not model.is_file():
         raise RuntimeError(f'Missing private GLB: {model}; run fetch first')
@@ -254,6 +256,9 @@ def main():
                     else detail(client, entry))
             if args.command == 'fetch':
                 item = acquire(client, item, args.out)
+                for key in ('rendered_views', 'render_host'):
+                    if key in manifest.get(item['slug'], {}):
+                        item[key] = manifest[item['slug']][key]
                 print(f"fetched {item['slug']} ({item['role']} -> {item['game_role']})", flush=True)
             else:
                 views = ('top-bank-left', 'top', 'top-bank-right', 'left', 'right')
@@ -270,7 +275,7 @@ def main():
                     print(f"GTX rendered {item['slug']}: top with left/right bank, side left/right", flush=True)
             manifest[item['slug']] = item
             errors.pop(item['slug'], None)
-        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        except (KeyError, OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
             if not args.continue_on_error:
                 raise
             errors[entry['slug']] = {'slug': entry['slug'], 'command': args.command, 'message': str(error)}
