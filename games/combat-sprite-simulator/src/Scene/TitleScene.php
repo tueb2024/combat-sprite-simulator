@@ -39,7 +39,8 @@ final class TitleScene extends MenuScene
     {
         return [
             ['START MISSION', null, fn () => $this->scenes()->switchTo(PlayScene::class)],
-            ['SURVOL A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class)],
+            ['MISSION A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class, ['purpose' => 'mission'])],
+            ['SURVOL A L ADRESSE', null, fn () => $this->scenes()->switchTo(AddressEntryScene::class, ['purpose' => 'flight'])],
             ['SURVOL LIBRE', null, fn () => $this->scenes()->switchTo(GeoFlightScene::class)],
         ];
     }
