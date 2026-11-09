@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Combat Sprite Simulator : pilotez un Hurricane au-dessus des photographies aériennes de l'IGN, à partir d'une adresse française.">
+  <title>Combat Sprite Simulator — Survol libre</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0a141b; color: #eee; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; }
+    main { max-width: 760px; margin: auto; }
+    h1 { margin: 0 0 12px; font-size: clamp(22px,4vw,32px); letter-spacing: .07em; text-transform: uppercase; }
+    form { display: flex; gap: 8px; margin: 12px 0 8px; }
+    label { display: block; font-weight: 600; }
+    input { flex: 1; min-width: 0; padding: 13px; font: inherit; background: #152633; border: 1px solid #6b8994; border-radius: 5px; color: #fff; }
+    button { background: #e2c786; color: #101a1c; border: 0; border-radius: 5px; padding: 0 18px; font-weight: 700; cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+    #status { color: #b9c9cb; min-height: 1.5em; margin: 0 0 8px; }
+    .player { display: flex; justify-content: center; background: #03090a; border: 1px solid #344b50; border-radius: 6px; padding: 8px; }
+    iframe { width: min(100%, 460px); height: min(80vh, 690px); aspect-ratio: 2/3; border: 0; background: #040809; }
+    .help, footer { color: #b3c4c5; font-size: 13px; line-height: 1.5; }
+    .help a, footer a { color: #e2c786; }
+    @media (max-width: 440px) { body { padding: 8px; } form { flex-wrap: wrap; } button { min-height: 42px; } iframe { height: 66vh; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Combat Sprite Simulator</h1>
+    <label for="address">Survoler une adresse en France métropolitaine</label>
+    <form id="flight-form">
+      <input id="address" type="search" autocomplete="street-address" maxlength="180"
+        placeholder="Rue, commune, code postal..." aria-describedby="status" required>
+      <button type="submit">Survoler</button>
+    </form>
+    <p id="status" aria-live="polite">Chargement du moteur JumPHP…</p>
+
+    <div class="player">
+      <iframe id="game" src="play/" title="Combat Sprite Simulator — jeu JumPHP"
+        allow="fullscreen; autoplay" loading="eager"></iframe>
+    </div>
+    <p class="help">
+      L'adresse ouvre le mode Survol libre. Flèches ou ZQSD/WASD pour diriger l'avion,
+      Échap pour retourner au menu. Sans adresse, sélectionnez « SURVOL LIBRE » dans le jeu
+      pour découvrir la zone de démonstration.
+      La recherche et la simulation sont exécutées en PHP dans JumPHP ; cette page ne fait que transmettre la saisie.
+    </p>
+    <footer>
+      Fond aérien : © IGN — BD ORTHO® (Géoplateforme WMTS).
+      Les photographies montrent le territoire réel, pas les conditions historiques des combats.
+      <a href="play/">Ouvrir le jeu seul</a>.
+    </footer>
+  </main>
+  <script>
+    const game = document.getElementById('game');
+    const form = document.getElementById('flight-form');
+    const status = document.getElementById('status');
+    const field = document.getElementById('address');
+    let ready = false;
+    let pending = null;
+
+    function sendAddress(address) {
+      try {
+        const bridge = game.contentWindow?.JumPHP;
+        if (!ready || typeof bridge?.send !== 'function') {
+          pending = address;
+          status.textContent = 'Le jeu termine son chargement…';
+          return;
+        }
+        bridge.send('fly-to-address', { address });
+        pending = null;
+        status.textContent = 'Recherche IGN en cours : ' + address;
+        game.focus();
+      } catch (error) {
+        status.textContent = 'Le jeu doit être hébergé sur la même origine que cette page.';
+      }
+    }
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const address = field.value.trim();
+      if (address.length < 3) {
+        status.textContent = 'Saisissez une adresse plus précise.';
+        return;
+      }
+      sendAddress(address);
+    });
+    window.addEventListener('message', (event) => {
+      if (event.source !== game.contentWindow || event.data?.type !== 'jumphp:ready') return;
+      ready = true;
+      status.textContent = 'Prêt : saisissez une adresse ou utilisez le menu du jeu.';
+      if (pending) sendAddress(pending);
+    });
+  </script>
+</body>
+</html>

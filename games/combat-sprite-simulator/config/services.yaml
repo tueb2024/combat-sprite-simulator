@@ -8,4 +8,4 @@ services:
 
   App\:
     resource: '../src/*'
-    exclude: '../src/Entity'    # entities are created with `new`, not by the container
+    exclude: ['../src/Entity', '../src/Geo'] # helpers are instantiated by scenes; not services
