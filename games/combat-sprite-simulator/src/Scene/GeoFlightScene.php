@@ -159,6 +159,10 @@ final class GeoFlightScene extends AbstractScene
         $r->fillRect(0, 450, 320, 30, [10, 24, 28, 210]);
         $loading = $this->tiles?->readyCount() ?? 0;
         $message = $loading < 4 ? 'LOADING IGN IMAGERY...' : 'ARROWS: FLY   ESC: MENU';
+        if (!str_starts_with($this->status, 'Flying over')
+            && !str_starts_with($this->status, 'IGN 20cm')) {
+            $message = substr(strtoupper($this->status), 0, 40);
+        }
         if (($this->tiles?->failures() ?? 0) > 3 && $loading === 0) {
             $message = 'IGN UNAVAILABLE - CHECK NETWORK / CORS';
         }
