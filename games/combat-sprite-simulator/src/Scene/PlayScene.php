@@ -4,6 +4,10 @@ namespace App\Scene;
 
 use App\Entity\Hitbox;
 use App\Entity\EnemyProfile;
+use App\Geo\AddressLookup;
+use App\Geo\AircraftShadow;
+use App\Geo\MissionTerrain;
+use App\Geo\OrthoTileManager;
 use JumPHP\Renderer\Renderer;
 use JumPHP\Scene\AbstractScene;
 
@@ -35,8 +39,30 @@ final class PlayScene extends AbstractScene
     private $ju87Tex = null;
     private $groundTex = null;
 
+    private ?MissionTerrain $missionTerrain = null;
+    private ?OrthoTileManager $missionTiles = null;
+    private string $missionAddress = '';
+    private string $geoState = 'none';
+    private string $geoMessage = '';
+    private float $geoElapsed = 0.0;
+    private int $geoGeneration = 0;
+    private $playerShadowTex = null;
+    private $bf109ShadowTex = null;
+    private $ju87ShadowTex = null;
+    private $bossShadowTex = null;
+
     public function enter(array $params = []): void
     {
+        // Cancel outstanding geocoding and tile responses from previous missions.
+        ++$this->geoGeneration;
+        $this->missionTiles?->stop();
+        $this->missionTiles = null;
+        $this->missionTerrain = null;
+        $this->geoElapsed = 0;
+        $this->missionAddress = trim((string) ($params['address'] ?? ''));
+        $this->geoState = $this->missionAddress === '' ? 'none' : 'search';
+        $this->geoMessage = '';
+        $this->releaseShadows();
         $this->time = $this->scroll = $this->fireDelay = $this->spawnDelay = $this->bossDelay = 0;
         $this->x = 160;
         $this->y = 405;
@@ -74,6 +100,97 @@ final class PlayScene extends AbstractScene
         $this->bf109Tex = $this->sdl()->getTexture('combat-bf109')['texture'];
         $this->ju87Tex = $this->sdl()->getTexture('combat-ju87')['texture'];
         $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
+
+        if ($this->missionAddress !== '') {
+            if (isset($params['latitude'], $params['longitude'])
+                && is_numeric($params['latitude']) && is_numeric($params['longitude'])) {
+                // Pre-resolved coordinates: used on restart and in deterministic tests.
+                $this->startAtCoordinates(
+                    (float) $params['latitude'], (float) $params['longitude'],
+                    (string) ($params['label'] ?? $this->missionAddress)
+                );
+            } else {
+                $generation = $this->geoGeneration;
+                (new AddressLookup($this->engine->http()))->search(
+                    $this->missionAddress,
+                    function (float $lat, float $lon, string $label) use ($generation): void {
+                        if ($generation === $this->geoGeneration) {
+                            $this->startAtCoordinates($lat, $lon, $label);
+                        }
+                    },
+                    function (string $message) use ($generation): void {
+                        if ($generation === $this->geoGeneration) {
+                            $this->geoState = 'error';
+                            $this->geoMessage = $message;
+                        }
+                    }
+                );
+            }
+        }
+    }
+
+    public function exit(): void
+    {
+        ++$this->geoGeneration;
+        $this->missionTiles?->stop();
+        $this->missionTiles = null;
+        $this->releaseShadows();
+    }
+
+    private function startAtCoordinates(float $lat, float $lon, string $label): void
+    {
+        if ($lat < 41.0 || $lat > 51.5 || $lon < -6.0 || $lon > 10.0) {
+            $this->geoState = 'error';
+            $this->geoMessage = 'Adresse hors de France metropolitaine';
+            return;
+        }
+        $this->missionTiles?->stop();
+        $this->missionTerrain = new MissionTerrain($lat, $lon, $label);
+        $this->missionTiles = new OrthoTileManager($this->engine->http(), $this->sdl());
+        $this->geoElapsed = 0.0;
+        $this->geoState = 'loading';
+        $this->geoMessage = 'Chargement des photographies IGN';
+        $this->createShadows();
+    }
+
+    private function createShadows(): void
+    {
+        $this->releaseShadows();
+        $this->playerShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/hurricane-mk1-atlas.png'),
+            512, 64, 'mission-shadow-hurricane');
+        $this->bf109ShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/bf109-e4-atlas.png'),
+            512, 64, 'mission-shadow-bf109');
+        $this->ju87ShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/ju87-b2-atlas.png'),
+            512, 64, 'mission-shadow-ju87');
+        $this->bossShadowTex = AircraftShadow::create($this->sdl(),
+            $this->engine->config->path('assets/sprites/junkers-atlas.png'),
+            512, 64, 'mission-shadow-boss', 0, 0, 256);
+    }
+
+    private function releaseShadows(): void
+    {
+        foreach (['mission-shadow-hurricane', 'mission-shadow-bf109',
+            'mission-shadow-ju87', 'mission-shadow-boss'] as $name) {
+            if ($this->sdl()->hasTexture($name)) {
+                $this->sdl()->releaseTexture($name);
+            }
+        }
+        $this->playerShadowTex = $this->bf109ShadowTex = null;
+        $this->ju87ShadowTex = $this->bossShadowTex = null;
+    }
+
+    /** Refresh tile requests while the level scrolls through the same real-world area. */
+    private function updateTerrainTiles(): void
+    {
+        if ($this->missionTerrain === null || $this->missionTiles === null) {
+            return;
+        }
+        [$cameraX, $cameraY] = $this->missionTerrain->camera($this->scroll);
+        $this->missionTiles->tick($cameraX, $cameraY, $this->width(),
+            $this->height(), $this->geoElapsed);
     }
 
     public function update(float $dt): void
