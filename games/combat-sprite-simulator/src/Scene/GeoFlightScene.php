@@ -19,6 +19,7 @@ final class GeoFlightScene extends AbstractScene
     private $shadowTexture = null;
     private $hurricaneTexture = null;
     private $addressListener = null;
+    private $missionListener = null;
 
     private float $planeX = 0;
     private float $planeY = 0;
@@ -58,6 +59,13 @@ final class GeoFlightScene extends AbstractScene
             $this->searchAddress($address);
         };
         $this->engine->bridge->on('fly-to-address', $this->addressListener);
+        $this->missionListener = function (array $event): void {
+            $address = trim((string) ($event['address'] ?? ''));
+            if ($address !== '') {
+                $this->scenes()->switchTo(PlayScene::class, ['address' => $address], false);
+            }
+        };
+        $this->engine->bridge->on('mission-at-address', $this->missionListener);
         if (isset($params['address']) && is_string($params['address'])) {
             $this->searchAddress($params['address']);
         }
@@ -69,6 +77,10 @@ final class GeoFlightScene extends AbstractScene
         if ($this->addressListener !== null) {
             $this->engine->bridge->removeListener('fly-to-address', $this->addressListener);
             $this->addressListener = null;
+        }
+        if ($this->missionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->missionListener);
+            $this->missionListener = null;
         }
         $this->tiles?->stop();
         $this->tiles = null;
