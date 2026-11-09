@@ -1,3 +1,12 @@
+"""Original aircraft renderer; --spec selects the documented parametric pipeline."""
+import runpy
+import sys
+from pathlib import Path
+
+if '--spec' in sys.argv:
+    runpy.run_path(str(Path(__file__).with_name('parametric_aircraft.py')), run_name='__main__')
+    raise SystemExit(0)
+
 import bpy
 import math
 import os

@@ -3,8 +3,8 @@
 services:
   reference-index:
     build:
-      context: .
-      dockerfile: docker/reference-indexer/Dockerfile
+      context: ./tools/references
+      dockerfile: ../../docker/reference-indexer/Dockerfile
     user: "${CSS_UID:-1000}:${CSS_GID:-1000}"
     environment:
       CSS_INDEX_DIR: /index

@@ -1,3 +1,17 @@
+"""Original atlas assembler; --out selects validated parametric atlases."""
+import runpy
+import sys
+from pathlib import Path
+
+if '--ww2' in sys.argv:
+    sys.argv.remove('--ww2')
+    runpy.run_path(str(Path(__file__).with_name('assemble_ww2.py')), run_name='__main__')
+    raise SystemExit(0)
+
+if '--out' in sys.argv:
+    runpy.run_path(str(Path(__file__).with_name('assemble_parametric_atlas.py')), run_name='__main__')
+    raise SystemExit(0)
+
 import bpy
 import json
 import os

@@ -27,6 +27,7 @@ core.[0-9]*
 
 # what the AI assistants did (IDE history): private to this computer
 /IA/
+__pycache__/
 /todo-migration-git.md
 /update.json
 /.git-project/

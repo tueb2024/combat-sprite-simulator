@@ -51,6 +51,8 @@ def main() -> int:
         except (ValueError, KeyError, TypeError) as err:
             print(f"Warning: could not parse Lenovo manifest: {err}", file=sys.stderr)
     catalog = []
+    bad_hashes = []
+    expected_files = set(originals)
     for pdf in sorted(BOOKS.glob("*.pdf")):
         output = INDEX / f"{pdf.stem}.txt"
         try:
@@ -76,6 +78,8 @@ def main() -> int:
         src = originals.get(pdf.name, {})
         expected_hash = src.get("sha256")
         actual_hash = sha256(pdf)
+        if expected_hash and actual_hash != expected_hash:
+            bad_hashes.append(pdf.name)
         record = {
             "id": pdf.stem,
             "filename": pdf.name,
@@ -89,11 +93,15 @@ def main() -> int:
         }
         catalog.append(record)
         print(f"{pdf.name}: {record['pages']} pages, {status}, {chars} text bytes")
+        expected_files.discard(pdf.name)
     manifest = INDEX / "catalog.local.json"
     manifest.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
     os.chmod(manifest, 0o600)
     print(f"Private index: {INDEX} | indexed {len(catalog)} PDFs")
     print("For scans, use manual/targeted visual inspection; no automatic bulk OCR.")
+    if bad_hashes or expected_files:
+        print(f"Manifest mismatch: wrong hashes={bad_hashes}; missing files={sorted(expected_files)}", file=sys.stderr)
+        return 4
     return 0 if catalog else 3
 
 

@@ -1,0 +1,28 @@
+{
+  "id": "hurricane-mk1",
+  "designation": "Hawker Hurricane Mk I",
+  "variant": "RAF Battle of Britain, Merlin III, 1940",
+  "year": 1940,
+  "role": "player",
+  "dimensions_m": {"span": 12.19, "length": 9.57},
+  "engine": {"count": 1, "type": "Rolls-Royce Merlin III inline piston", "propeller_blades": 3},
+  "shape": {
+    "family": "low-wing monoplane",
+    "nose": "rounded Merlin cowling and spinner",
+    "fuselage_width": 0.105,
+    "wing_sections": [[0.06, 0.28, -0.16, 0.22], [0.26, 0.25, -0.13, 0.24], [0.45, 0.15, -0.07, 0.30], [0.50, 0.08, 0.00, 0.32]],
+    "tail_span": 0.35,
+    "canopy_length": 0.24,
+    "canopy_center_y": -0.02,
+    "radiator": true,
+    "fixed_gear": false,
+    "camouflage": true
+  },
+  "livery": {"upper": "RAF Dark Earth and Dark Green", "lower": "Sky", "markings": "RAF roundels on upper wings; no unit serial asserted"},
+  "gameplay": {"sprite_width": 60, "sprite_height": 60, "hitbox": [15, 16, 30, 30], "bank_degrees": [-28, 0, 28], "propeller_phases": [0, 50, 100], "projectile": "paired_bullets"},
+  "sources": [
+    {"book_id": "crosby-fighters-bombers", "pdf_page": 93, "printed_page": 91, "supports": ["Mk I", "Merlin III", "12.19 m span", "9.57 m length"]},
+    {"url": "https://www.canada.ca/en/air-force/services/aircraft/hawker-hurricane.html", "supports": ["Mk I morphology", "single Merlin", "RAF service"], "note": "Canadian source rounds dimensions differently"}
+  ],
+  "source_confidence": {"dimensions": "book_verified", "wing_planform": "inferred_from_documented_type", "camouflage": "plausible_1940_game_livery", "gameplay": "invented_arcade"}
+}

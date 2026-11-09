@@ -1,0 +1,524 @@
+{
+  "bf109-e4": {
+    "image": "bf109-e4-atlas.png",
+    "width": 1536,
+    "height": 1536,
+    "frames": [
+      {
+        "name": "bf109-e4-b0-p0",
+        "x": 0,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 43956
+      },
+      {
+        "name": "bf109-e4-b0-p1",
+        "x": 512,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 44480
+      },
+      {
+        "name": "bf109-e4-b0-p2",
+        "x": 1024,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 44709
+      },
+      {
+        "name": "bf109-e4-b1-p0",
+        "x": 0,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 48183
+      },
+      {
+        "name": "bf109-e4-b1-p1",
+        "x": 512,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 48834
+      },
+      {
+        "name": "bf109-e4-b1-p2",
+        "x": 1024,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 49106
+      },
+      {
+        "name": "bf109-e4-b2-p0",
+        "x": 0,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 43917
+      },
+      {
+        "name": "bf109-e4-b2-p1",
+        "x": 512,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 44489
+      },
+      {
+        "name": "bf109-e4-b2-p2",
+        "x": 1024,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          122,
+          128,
+          267,
+          256
+        ],
+        "alpha_pixels": 44721
+      }
+    ],
+    "gameplay_size": [
+      46,
+      48
+    ],
+    "source_spec": "bf109-e4.json"
+  },
+  "hurricane-mk1": {
+    "image": "hurricane-mk1-atlas.png",
+    "width": 1536,
+    "height": 1536,
+    "frames": [
+      {
+        "name": "hurricane-mk1-b0-p0",
+        "x": 0,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 49406
+      },
+      {
+        "name": "hurricane-mk1-b0-p1",
+        "x": 512,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 49872
+      },
+      {
+        "name": "hurricane-mk1-b0-p2",
+        "x": 1024,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 50103
+      },
+      {
+        "name": "hurricane-mk1-b1-p0",
+        "x": 0,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 54216
+      },
+      {
+        "name": "hurricane-mk1-b1-p1",
+        "x": 512,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 54790
+      },
+      {
+        "name": "hurricane-mk1-b1-p2",
+        "x": 1024,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 55055
+      },
+      {
+        "name": "hurricane-mk1-b2-p0",
+        "x": 0,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 49331
+      },
+      {
+        "name": "hurricane-mk1-b2-p1",
+        "x": 512,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 49850
+      },
+      {
+        "name": "hurricane-mk1-b2-p2",
+        "x": 1024,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          128,
+          137,
+          256,
+          256
+        ],
+        "alpha_pixels": 50088
+      }
+    ],
+    "gameplay_size": [
+      60,
+      60
+    ],
+    "source_spec": "hurricane-mk1.json"
+  },
+  "ju87-b2": {
+    "image": "ju87-b2-atlas.png",
+    "width": 1536,
+    "height": 1536,
+    "frames": [
+      {
+        "name": "ju87-b2-b0-p0",
+        "x": 0,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 51721
+      },
+      {
+        "name": "ju87-b2-b0-p1",
+        "x": 512,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 52355
+      },
+      {
+        "name": "ju87-b2-b0-p2",
+        "x": 1024,
+        "y": 0,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 52756
+      },
+      {
+        "name": "ju87-b2-b1-p0",
+        "x": 0,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 54159
+      },
+      {
+        "name": "ju87-b2-b1-p1",
+        "x": 512,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 54853
+      },
+      {
+        "name": "ju87-b2-b1-p2",
+        "x": 1024,
+        "y": 512,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 55303
+      },
+      {
+        "name": "ju87-b2-b2-p0",
+        "x": 0,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 51679
+      },
+      {
+        "name": "ju87-b2-b2-p1",
+        "x": 512,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 52360
+      },
+      {
+        "name": "ju87-b2-b2-p2",
+        "x": 1024,
+        "y": 1024,
+        "width": 512,
+        "height": 512,
+        "pivot": [
+          256,
+          256
+        ],
+        "hitbox": [
+          100,
+          120,
+          313,
+          256
+        ],
+        "alpha_pixels": 52765
+      }
+    ],
+    "gameplay_size": [
+      72,
+      68
+    ],
+    "source_spec": "ju87-b2.json"
+  }
+}

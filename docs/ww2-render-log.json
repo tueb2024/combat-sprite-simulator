@@ -1,0 +1,77 @@
+[
+  {
+    "id": "bf109-e4",
+    "device": "CUDA NVIDIA GeForce GTX 1660 SUPER",
+    "blender_version": "5.2.3 LTS",
+    "render_seconds": 17.71,
+    "tile": [
+      512,
+      512
+    ],
+    "frames": [
+      "bf109-e4-b0-p0.png",
+      "bf109-e4-b0-p1.png",
+      "bf109-e4-b0-p2.png",
+      "bf109-e4-b1-p0.png",
+      "bf109-e4-b1-p1.png",
+      "bf109-e4-b1-p2.png",
+      "bf109-e4-b2-p0.png",
+      "bf109-e4-b2-p1.png",
+      "bf109-e4-b2-p2.png"
+    ],
+    "gameplay_size": [
+      46,
+      48
+    ]
+  },
+  {
+    "id": "hurricane-mk1",
+    "device": "CUDA NVIDIA GeForce GTX 1660 SUPER",
+    "blender_version": "5.2.3 LTS",
+    "render_seconds": 17.63,
+    "tile": [
+      512,
+      512
+    ],
+    "frames": [
+      "hurricane-mk1-b0-p0.png",
+      "hurricane-mk1-b0-p1.png",
+      "hurricane-mk1-b0-p2.png",
+      "hurricane-mk1-b1-p0.png",
+      "hurricane-mk1-b1-p1.png",
+      "hurricane-mk1-b1-p2.png",
+      "hurricane-mk1-b2-p0.png",
+      "hurricane-mk1-b2-p1.png",
+      "hurricane-mk1-b2-p2.png"
+    ],
+    "gameplay_size": [
+      60,
+      60
+    ]
+  },
+  {
+    "id": "ju87-b2",
+    "device": "CUDA NVIDIA GeForce GTX 1660 SUPER",
+    "blender_version": "5.2.3 LTS",
+    "render_seconds": 17.73,
+    "tile": [
+      512,
+      512
+    ],
+    "frames": [
+      "ju87-b2-b0-p0.png",
+      "ju87-b2-b0-p1.png",
+      "ju87-b2-b0-p2.png",
+      "ju87-b2-b1-p0.png",
+      "ju87-b2-b1-p1.png",
+      "ju87-b2-b1-p2.png",
+      "ju87-b2-b2-p0.png",
+      "ju87-b2-b2-p1.png",
+      "ju87-b2-b2-p2.png"
+    ],
+    "gameplay_size": [
+      72,
+      68
+    ]
+  }
+]

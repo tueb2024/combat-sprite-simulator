@@ -18,6 +18,16 @@ def main():
     term = args.query.casefold()
     for txt in sorted(root.glob("*.txt")):
         content = txt.read_text(encoding="utf-8", errors="replace")
+        ocr_page = re.search(r"\.ocr-page-(\d{4})$", txt.stem)
+        if ocr_page:
+            i = content.casefold().find(term)
+            if i != -1:
+                context = re.sub(r"\s+", " ", content[max(0, i - 70):i + len(args.query) + 100]).strip()
+                print(f"{txt.stem.split('.ocr-page-')[0]}, PDF page {int(ocr_page.group(1))} (targeted OCR): {context}")
+                hits += 1
+                if hits >= args.limit:
+                    return
+            continue
         for page_number, page in enumerate(content.split("\f"), start=1):
             i = page.casefold().find(term)
             if i == -1:

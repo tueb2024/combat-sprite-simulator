@@ -1,0 +1,28 @@
+{
+  "id": "bf109-e4",
+  "designation": "Messerschmitt Bf 109 E-4",
+  "variant": "Emil E-4, 1940",
+  "year": 1940,
+  "role": "enemy",
+  "dimensions_m": {"span": 9.87, "length": 8.64},
+  "engine": {"count": 1, "type": "Daimler-Benz DB 601Aa inline piston", "propeller_blades": 3},
+  "shape": {
+    "family": "low-wing monoplane",
+    "nose": "long pointed inline cowling and narrow spinner",
+    "fuselage_width": 0.080,
+    "wing_sections": [[0.05, 0.17, -0.16, 0.18], [0.25, 0.15, -0.13, 0.20], [0.47, 0.10, -0.06, 0.25], [0.50, 0.07, -0.03, 0.26]],
+    "tail_span": 0.31,
+    "canopy_length": 0.18,
+    "canopy_center_y": -0.03,
+    "radiator": true,
+    "fixed_gear": false,
+    "camouflage": false
+  },
+  "livery": {"upper": "RLM 71 dark green with RLM 02 grey-green panels", "lower": "RLM 65 pale blue", "markings": "Balkenkreuz on upper wings; no political insignia"},
+  "gameplay": {"sprite_width": 46, "sprite_height": 48, "hitbox": [11, 12, 24, 24], "bank_degrees": [-30, 0, 30], "propeller_phases": [0, 50, 100], "speed_px_s": 190, "hp": 2, "projectile": "light_bullet"},
+  "sources": [
+    {"book_id": "sharpe-chant-fighting-aircraft", "pdf_page": 405, "printed_page": 401, "supports": ["E-1 to E-4 family", "DB 601Aa", "9.87 m span", "8.64 m length"]},
+    {"url": "https://www.rafmuseum.org.uk/documents/collections/78-AF-624-Bf109E-4101.pdf", "supports": ["1940 E-4 airframe", "engine installation", "markings"], "note": "Museum notes subtype ambiguity on the preserved airframe"}
+  ],
+  "source_confidence": {"dimensions": "book_verified_family", "wing_planform": "inferred_from_documented_type", "camouflage": "plausible_1940_game_livery", "gameplay": "invented_arcade"}
+}

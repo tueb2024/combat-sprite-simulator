@@ -1,7 +1,7 @@
 name: demo
 on:
   push:
-    branches: [feature/first-playable]
+    branches: [feature/first-playable, feature/reference-pipeline-docker, feature/ww2-aircraft-blender]
   workflow_dispatch:
 jobs:
   jumphp:
@@ -9,6 +9,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Blender atlas and source data
+        run: |
+          python3 tools/blender/validate_assets.py
+          python3 tools/blender/validate_ww2.py
       - name: Install
         run: bin/jumphp install combat-sprite-simulator
       - name: Test
@@ -26,6 +30,10 @@ jobs:
           JUMPHP_SCENE: 'App\Scene\PlayScene'
           JUMPHP_SCENE_PARAMS: '{"boss":true}'
         run: bin/jumphp shot combat-sprite-simulator 120 var/screenshots/boss.png
+      - name: WWII gameplay screenshot
+        env:
+          JUMPHP_SCENE: 'App\Scene\PlayScene'
+        run: bin/jumphp shot combat-sprite-simulator 155 var/screenshots/ww2-wave.png
       - name: Browser engine
         run: bin/jumphp engine:download
       - name: Browser build

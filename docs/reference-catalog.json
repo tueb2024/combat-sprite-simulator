@@ -1,37 +1,14 @@
 {
   "checked_on": "2026-11-09",
-  "private_pdf_location_checked": "C:\\Users\\tchou\\Downloads\\*.pdf",
-  "private_pdfs_found": [],
-  "aircraft": [
-    {
-      "type": "Hawker Hurricane Mk I",
-      "role_in_game": "player",
-      "wingspan_m": 12.14,
-      "length_m": 9.58,
-      "engines": "one Rolls-Royce Merlin II or III piston engine",
-      "era": "1939-1940",
-      "bibliography": "Royal Canadian Air Force, Hawker Hurricane, Technical Specifications (Mark I)",
-      "source": "https://www.canada.ca/en/air-force/services/aircraft/hawker-hurricane.html"
-    },
-    {
-      "type": "Junkers G 38",
-      "role_in_game": "fictional armed arcade boss; historical aircraft was a transport",
-      "wingspan_m": 44.0,
-      "length_m": 23.2,
-      "engines": "four Junkers L88a, later four Jumo 204 A diesel engines",
-      "era": "1929-1941",
-      "bibliography": "Junkers, Junkers G 38 aircraft history and specifications; NACA Aircraft Circular 116 (1930)",
-      "source": "https://hugo.junkers.de/blog/flugzeuge/junkers-g-38/"
-    }
-  ],
-  "private_books_expected_but_not_found": [
-    "The complete guide to fighters & bombers of the world — Francis Crosby",
-    "Pocket Encyclopaedia of World Aircraft_ Balloons and — Lennart A. T. Ege",
-    "Helicopters and other rotorcraft since 1907 — Kenneth Munson",
-    "The Pocket Encyclopaedia of World Aircraft in Colour — Kenneth Munson",
-    "Encyclopedia of Airliners Between the Wars 1919 39 — Kenneth Munson",
-    "Airliners Since 1946 — Kenneth Munson",
-    "The Complete Book of Fighters — William Green and Gordon Swanborough (2001)",
-    "Fighting aircraft of the world — Mike Sharpe and Christopher Chant"
-  ]
+  "private_storage": "~/.local/share/combat-sprite-simulator/reference-books (outside Git, mode 0700; files 0600)",
+  "index_storage": "~/.local/share/combat-sprite-simulator/reference-index (outside Git, mode 0700; files 0600)",
+  "transfer_source": "Lenovo C:\\Users\\tchou\\Downloads",
+  "volumes_transferred": 8,
+  "sha256_matches_lenovo": 8,
+  "index_method": "offline Docker Compose, pdftotext with PDF page separators",
+  "text_searchable": ["crosby-fighters-bombers", "munson-rotorcraft", "munson-world-aircraft-1966", "sharpe-chant-fighting-aircraft"],
+  "scans_or_low_text": ["ege-balloons-aircraft", "green-swanborough-fighters", "munson-airliners-interwar", "munson-airliners-since-1946"],
+  "ocr_policy": "Selected pages only, stored privately; no bulk OCR",
+  "facts_for_assets": "tools/blender/aircraft-spec.json",
+  "note": "No PDFs, page images, or extracted text are committed. PDF page and printed page are separate fields in each aircraft citation."
 }

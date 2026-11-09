@@ -3,6 +3,7 @@
 namespace App\Scene;
 
 use App\Entity\Hitbox;
+use App\Entity\EnemyProfile;
 use JumPHP\Renderer\Renderer;
 use JumPHP\Scene\AbstractScene;
 
@@ -27,8 +28,11 @@ final class PlayScene extends AbstractScene
     private array $enemies = [];
     private array $shots = [];
     private array $sparks = [];
+    private int $spawnCount = 0;
     private $hurricaneTex = null;
     private $junkersTex = null;
+    private $bf109Tex = null;
+    private $ju87Tex = null;
     private $groundTex = null;
 
     public function enter(array $params = []): void
@@ -46,18 +50,23 @@ final class PlayScene extends AbstractScene
         $this->paused = false;
         $this->demo = !empty($params['demo']);
         $this->enemies = $this->shots = $this->sparks = [];
+        $this->spawnCount = 0;
         if (!empty($params['boss'])) {
             $this->phase = 'boss';
             $this->bossY = 85;
             $this->bossHp = (int)($params['bossHp'] ?? 100);
         }
-        if (!$this->sdl()->hasTexture('combat-hurricane')) {
-            $this->sdl()->loadTexture('combat-hurricane', 'assets/sprites/hurricane-atlas.png');
+        if (!$this->sdl()->hasTexture('combat-hurricane-ww2')) {
+            $this->sdl()->loadTexture('combat-hurricane-ww2', 'assets/sprites/hurricane-mk1-atlas.png');
             $this->sdl()->loadTexture('combat-junkers', 'assets/sprites/junkers-atlas.png');
             $this->sdl()->loadTexture('combat-ground', 'assets/tiles/ign-beauce-2023.png');
+            $this->sdl()->loadTexture('combat-bf109', 'assets/sprites/bf109-e4-atlas.png');
+            $this->sdl()->loadTexture('combat-ju87', 'assets/sprites/ju87-b2-atlas.png');
         }
-        $this->hurricaneTex = $this->sdl()->getTexture('combat-hurricane')['texture'];
+        $this->hurricaneTex = $this->sdl()->getTexture('combat-hurricane-ww2')['texture'];
         $this->junkersTex = $this->sdl()->getTexture('combat-junkers')['texture'];
+        $this->bf109Tex = $this->sdl()->getTexture('combat-bf109')['texture'];
+        $this->ju87Tex = $this->sdl()->getTexture('combat-ju87')['texture'];
         $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
     }
 
@@ -84,9 +93,11 @@ final class PlayScene extends AbstractScene
         if ($this->phase === 'wave') {
             $this->spawnDelay -= $dt;
             if ($this->spawnDelay <= 0) {
-                $lane = ((int)floor($this->time * 5)) % 5;
-                $this->enemies[] = ['x' => 40 + $lane * 60, 'y' => -25, 'hp' => 3];
-                $this->spawnDelay = 1.2;
+                $lane = ($this->spawnCount * 3 + 1) % 5;
+                $type = ['bf109', 'ju87', 'bf109', 'bf109', 'ju87'][$this->spawnCount % 5];
+                $this->enemies[] = EnemyProfile::spawn($type, 40 + $lane * 60);
+                $this->spawnCount++;
+                $this->spawnDelay = 1.15;
             }
             if ($this->time >= 50) {
                 $this->phase = 'boss';
@@ -102,26 +113,35 @@ final class PlayScene extends AbstractScene
             }
         }
         foreach ($this->enemies as $i => &$enemy) {
-            $enemy['y'] += 100 * $dt;
+            EnemyProfile::step($enemy, $dt);
+            if ($enemy['fireDelay'] <= 0 && $enemy['y'] > 24 && $enemy['y'] < 310) {
+                $this->shots[] = ['x' => $enemy['x'], 'y' => $enemy['y'] + $enemy['hitHeight'] / 2,
+                    'vy' => $enemy['type'] === 'bf109' ? 145 : 110, 'friendly' => false];
+                $enemy['fireDelay'] = $enemy['type'] === 'bf109' ? 1.8 : 2.8;
+            }
             if ($enemy['y'] > 500) unset($this->enemies[$i]);
-            elseif ($this->invulnerable <= 0 && Hitbox::overlap($enemy['x'] - 14, $enemy['y'] - 12, 28, 24, $this->x - 13, $this->y - 18, 26, 36)) $this->damage();
+            else {
+                [$ex, $ey, $ew, $eh] = EnemyProfile::hitbox($enemy);
+                if ($this->invulnerable <= 0 && Hitbox::overlap($ex, $ey, $ew, $eh, $this->x - 15, $this->y - 15, 30, 30)) $this->damage();
+            }
         }
         unset($enemy);
         foreach ($this->shots as $i => &$shot) {
             $shot['y'] += $shot['vy'] * $dt;
             if ($shot['y'] < -10 || $shot['y'] > 490) { unset($this->shots[$i]); continue; }
             if (!$shot['friendly']) {
-                if ($this->invulnerable <= 0 && Hitbox::overlap($shot['x'] - 3, $shot['y'] - 5, 6, 10, $this->x - 13, $this->y - 18, 26, 36)) {
+                if ($this->invulnerable <= 0 && Hitbox::overlap($shot['x'] - 3, $shot['y'] - 5, 6, 10, $this->x - 15, $this->y - 15, 30, 30)) {
                     unset($this->shots[$i]);
                     $this->damage();
                 }
                 continue;
             }
             foreach ($this->enemies as $j => &$enemy) {
-                if (!Hitbox::overlap($shot['x'] - 2, $shot['y'] - 7, 4, 14, $enemy['x'] - 14, $enemy['y'] - 12, 28, 24)) continue;
+                [$ex, $ey, $ew, $eh] = EnemyProfile::hitbox($enemy);
+                if (!Hitbox::overlap($shot['x'] - 2, $shot['y'] - 7, 4, 14, $ex, $ey, $ew, $eh)) continue;
                 unset($this->shots[$i]);
                 $this->burst($shot['x'], $shot['y']);
-                if (--$enemy['hp'] <= 0) { unset($this->enemies[$j]); $this->score += 100; }
+                if (--$enemy['hp'] <= 0) { $this->score += $enemy['type'] === 'bf109' ? 100 : 250; unset($this->enemies[$j]); }
                 break;
             }
             unset($enemy);
@@ -167,9 +187,9 @@ final class PlayScene extends AbstractScene
         }
         $r->fillRect(0, 0, 320, 480, [10, 28, 23, 70]);
         foreach ($this->enemies as $e) {
-            $r->fillRect($e['x'] - 14, $e['y'] - 4, 28, 9, [148, 138, 110]);
-            $r->fillRect($e['x'] - 4, $e['y'] - 12, 8, 25, [188, 175, 138]);
-            $r->fillRect($e['x'] - 10, $e['y'] + 8, 20, 4, [105, 103, 89]);
+            $texture = $e['type'] === 'bf109' ? $this->bf109Tex : $this->ju87Tex;
+            $r->copy($texture, EnemyProfile::frame($e), $e['x'] - $e['width'] / 2,
+                $e['y'] - $e['height'] / 2, $e['width'], $e['height']);
         }
         if ($this->phase === 'boss') {
             $damageFrame = $this->bossHp < 50 ? 1 : 0;
@@ -179,7 +199,7 @@ final class PlayScene extends AbstractScene
         if ($this->invulnerable <= 0 || (int)($this->time * 10) % 2 === 0) {
             $bankFrame = $this->demo ? 1 : ($this->actions()->isHeld('left') ? 0 : ($this->actions()->isHeld('right') ? 2 : 1));
             $propFrame = ((int)($this->time * 18)) % 3;
-            $r->copy($this->hurricaneTex, [$propFrame * 256, $bankFrame * 256, 256, 256], $this->x - 28, $this->y - 28, 56, 56);
+            $r->copy($this->hurricaneTex, [$propFrame * 512, $bankFrame * 512, 512, 512], $this->x - 30, $this->y - 30, 60, 60);
         }
         foreach ($this->sparks as $s) $r->fillRect($s['x'], $s['y'], 4, 4, [255, 177, 63]);
         $r->fillRect(0, 0, 320, 31, [20, 30, 34, 225]);

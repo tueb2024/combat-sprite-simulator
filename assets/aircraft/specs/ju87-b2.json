@@ -1,0 +1,29 @@
+{
+  "id": "ju87-b2",
+  "designation": "Junkers Ju 87 B-2",
+  "variant": "B-2 dive bomber, 1940",
+  "year": 1940,
+  "role": "enemy",
+  "dimensions_m": {"span": 13.8, "length": 11.1},
+  "engine": {"count": 1, "type": "Junkers Jumo 211D inverted-V inline piston", "propeller_blades": 3},
+  "shape": {
+    "family": "inverted gull-wing dive bomber",
+    "nose": "long inline cowling and radiator",
+    "fuselage_width": 0.105,
+    "wing_sections": [[0.07, 0.23, -0.19, 0.25], [0.25, 0.20, -0.16, -0.20], [0.46, 0.12, -0.07, 0.12], [0.50, 0.07, -0.01, 0.14]],
+    "tail_span": 0.38,
+    "canopy_length": 0.34,
+    "canopy_center_y": -0.04,
+    "radiator": true,
+    "fixed_gear": true,
+    "camouflage": true
+  },
+  "livery": {"upper": "RLM 70 dark green and RLM 71 green", "lower": "RLM 65 pale blue", "markings": "Balkenkreuz on upper wings; no political insignia"},
+  "gameplay": {"sprite_width": 72, "sprite_height": 68, "hitbox": [14, 16, 44, 34], "bank_degrees": [-22, 0, 22], "propeller_phases": [0, 50, 100], "speed_px_s": 85, "hp": 4, "projectile": "dive_bomb"},
+  "sources": [
+    {"book_id": "sharpe-chant-fighting-aircraft", "pdf_page": 341, "printed_page": 337, "supports": ["Ju 87B-1 family", "inverted gull wings", "fixed faired gear", "13.80 m span", "11.10 m length", "Jumo 211Da"], "note": "B-1 data used for the B-2 airframe proportions; exact B-2 length not independently verified in this volume"},
+    {"book_id": "crosby-fighters-bombers", "pdf_page": 373, "printed_page": 371, "supports": ["Ju 87B silhouette", "inverted gull wings", "B-series dive controls"]},
+    {"url": "https://www.manualslib.de/manual/96429/Ju-87-B-2.html?page=11", "supports": ["B-2 Jumo 211D engine"], "note": "Digitized original B-2 operating manual"}
+  ],
+  "source_confidence": {"dimensions": "book_verified_B_family_inferred_B2", "wing_planform": "book_verified_family", "camouflage": "plausible_1940_game_livery", "gameplay": "invented_arcade"}
+}
