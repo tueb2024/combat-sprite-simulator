@@ -50,9 +50,15 @@ final class PlayScene extends AbstractScene
     private $bf109ShadowTex = null;
     private $ju87ShadowTex = null;
     private $bossShadowTex = null;
+    private $siteMissionListener = null;
 
     public function enter(array $params = []): void
     {
+        // A restart can call enter() without a scene exit: avoid duplicate handlers.
+        if ($this->siteMissionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->siteMissionListener);
+            $this->siteMissionListener = null;
+        }
         // Cancel outstanding geocoding and tile responses from previous missions.
         ++$this->geoGeneration;
         $this->missionTiles?->stop();
@@ -101,6 +107,17 @@ final class PlayScene extends AbstractScene
         $this->ju87Tex = $this->sdl()->getTexture('combat-ju87')['texture'];
         $this->groundTex = $this->sdl()->getTexture('combat-ground')['texture'];
 
+        $this->siteMissionListener = function (array $event): void {
+            if ($this->scenes()->current() !== $this) {
+                return;
+            }
+            $address = trim((string) ($event['address'] ?? ''));
+            if ($address !== '') {
+                $this->enter(['address' => $address]);
+            }
+        };
+        $this->engine->bridge->on('mission-at-address', $this->siteMissionListener);
+
         if ($this->missionAddress !== '') {
             if (isset($params['latitude'], $params['longitude'])
                 && is_numeric($params['latitude']) && is_numeric($params['longitude'])) {
@@ -131,6 +148,10 @@ final class PlayScene extends AbstractScene
 
     public function exit(): void
     {
+        if ($this->siteMissionListener !== null) {
+            $this->engine->bridge->removeListener('mission-at-address', $this->siteMissionListener);
+            $this->siteMissionListener = null;
+        }
         ++$this->geoGeneration;
         $this->missionTiles?->stop();
         $this->missionTiles = null;
